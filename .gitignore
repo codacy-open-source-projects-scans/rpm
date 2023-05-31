@@ -1,0 +1,9 @@
+.*
+!.tx
+!.gitignore
+!.mailmap
+*.*~
+*.tmp
+
+/_build
+/docs/_site

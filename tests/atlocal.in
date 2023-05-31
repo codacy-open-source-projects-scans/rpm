@@ -1,0 +1,122 @@
+RPMLIBDIR="@usrlibdir@"
+LD_LIBRARY_PATH="${abs_builddir}/testing/${RPMLIBDIR}${LD_LIBRARY_PATH+:${LD_LIBRARY_PATH}}"
+export LD_LIBRARY_PATH
+export RPMLIBDIR
+PATH="${abs_builddir}/testing@usrbindir@:$PATH"
+export PATH
+
+PYTHON=@PYTHON@
+if test "${PYTHON}"; then
+    PYTHONPATH="${abs_builddir}/testing@pyexecdir@"
+    export PYTHONPATH
+fi
+
+CRYPTO=@CRYPTO@
+export CRYPTO
+if test x$CRYPTO = xlibgcrypt
+then
+    PGP=internal
+elif test x$CRYPTO = xopenssl
+then
+    PGP=internal
+elif test x$CRYPTO = xsequoia
+then
+    PGP=sequoia
+else
+    echo "Unhandled crypto backend: $CRYPTO"
+    exit
+fi
+
+RPMTEST="${abs_builddir}/testing"
+RPMDATA="${abs_srcdir}/data/"
+
+RPM_CONFIGDIR="${RPMTEST}/@RPM_CONFIGDIR@"
+RPM_POPTEXEC_PATH="${RPMTEST}/@usrbindir@"
+export RPM_CONFIGDIR RPM_POPTEXEC_PATH
+
+DBFORMAT=$(awk '/^%_db_backend/{print $2}' "${RPM_CONFIGDIR}/macros")
+export DBFORMAT
+
+# Popt looks into $HOME
+HOME="${PWD}"
+export HOME
+
+TZ=UTC
+export TZ
+
+unset SOURCE_DATE_EPOCH
+
+TOPDIR="${HOME}/build"
+
+RPM_XFAIL=${RPM_XFAIL-1}
+if test -x "@__FIND_DEBUGINFO@"; then
+    DEBUGINFO_DISABLED=false;
+else
+    DEBUGINFO_DISABLED=true;
+fi
+if test "${PYTHON}"; then
+    PYTHON_DISABLED=false;
+else
+    PYTHON_DISABLED=true;
+fi
+if grep -q '#define WITH_CAP 1' "${abs_top_builddir}/config.h"; then
+    CAP_DISABLED=false;
+else
+    CAP_DISABLED=true;
+fi
+if mknod foodev c 123 123; then
+   MKNOD_DISABLED=false
+   rm -f foodev
+else
+   MKNOD_DISABLED=true
+   # not related to mknod but close enough for a "am I privileged" test
+   VERIFYOPTS="--nouser --nogroup"
+fi
+
+MALLOC_DEBUG=libc_malloc_debug.so.0
+if ! LD_PRELOAD=${MALLOC_DEBUG} /bin/true 2>&1 | grep -q ERROR; then
+    MALLOC_PERTURB="$(awk 'BEGIN{srand(); printf "%d\n",(rand()*255)}')"
+    LD_PRELOAD="${MALLOC_DEBUG}"
+    GLIBC_TUNABLES="glibc.malloc.check=1:glibc.malloc.perturb=${MALLOC_PERTURB}"
+    export LD_PRELOAD GLIBC_TUNABLES
+fi
+
+function setup_env()
+{
+    if [ -d testing ]; then
+        RPMTEST=${PWD}/testing
+        HOME=${RPMTEST}
+        RPM_CONFIGDIR=${RPMTEST}/@RPM_CONFIGDIR@
+        export RPMTEST HOME RPM_CONFIGDIR
+    fi
+}
+
+function run()
+{
+    setup_env
+    "$@" --define "_buildhost testhost" --define "_tmppath ${RPMTEST}/tmp" --define "_topdir ${TOPDIR}" --define "_db_backend ${DBFORMAT}" --dbpath="${RPMTEST}/var/lib/rpm/"
+}
+
+function rundebug()
+{
+    setup_env
+    cp ${RPMDATA}/macros.debug ${RPM_CONFIGDIR}/macros.d/
+    "$@" --define "_buildhost testhost" --define "_tmppath ${RPMTEST}/tmp" --define "_topdir ${TOPDIR}" --define "_db_backend ${DBFORMAT}" --dbpath="${RPMTEST}/var/lib/rpm/"
+    rm -f ${RPM_CONFIGDIR}/macros.d/macros.debug
+}
+
+function runroot()
+{
+    setup_env
+    (unset RPM_CONFIGDIR RPM_POPTEXEC_PATH; cd ${RPMTEST} && \
+     MAGIC="/magic/magic" FAKECHROOT_BASE="${RPMTEST}" fakechroot "$@" --define "_buildhost testhost" --define "_topdir /build" --noplugins --nouserns
+    )
+}
+
+function runroot_other()
+{
+    setup_env
+    (unset RPM_CONFIGDIR RPM_POPTEXEC_PATH; cd ${RPMTEST} && \
+     FAKECHROOT_BASE="${RPMTEST}" fakechroot "$@"
+    )
+}
