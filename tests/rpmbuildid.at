@@ -23,13 +23,13 @@ AT_BANNER([RPM buildid tests])
 AT_SETUP([rpmbuild buildid none])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 
 # Build, contains one ELF which should have a buildid.
 rundebug rpmbuild \
   --define="_build_id_links none" \
-  --quiet -ba "${abs_srcdir}"/data/SPECS/hello.spec
+  --quiet -ba ${RPMDATA}/SPECS/hello.spec
 
 # There should be zero build-id files in both the main and debuginfo package
 echo -n "hello build-id files: "
@@ -46,7 +46,7 @@ runroot rpm -ql -p /build/RPMS/*/hello-debuginfo-1.0-1.*.rpm \
 hello debuginfo build-id files: 0
 ],
 [ignore])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check if rpmbuild "alldebug" generates debuginfo buildid symlinks.
@@ -54,7 +54,7 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid alldebug])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 
 # Build, contains one ELF which should have a buildid.
@@ -62,7 +62,7 @@ rundebug rpmbuild \
   --define="_build_id_links alldebug" \
   --undefine "_unique_debug_names" \
   --undefine "_unique_debug_srcs" \
-  --quiet -ba "${abs_srcdir}"/data/SPECS/hello.spec
+  --quiet -ba ${RPMDATA}/SPECS/hello.spec
 
 # There should be zero build-id files in the main package
 # Main and debug should be in the debuginfo package,
@@ -135,7 +135,7 @@ test "$canon_debug_file" = "$canon_debug_id_file" \
 hello debuginfo build-id files: 3
 ],
 [ignore])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check if rpmbuild "alldebug" generates debuginfo buildid symlinks.
@@ -143,14 +143,14 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid alldebug unique debug names])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 
 # Build, contains one ELF which should have a buildid.
 rundebug rpmbuild \
   --define="_build_id_links alldebug" \
   --define="_unique_debug_names 1" \
-  --quiet -ba "${abs_srcdir}"/data/SPECS/hello.spec
+  --quiet -ba ${RPMDATA}/SPECS/hello.spec
 
 # There should be zero build-id files in the main package
 # Main and debug should be in the debuginfo package,
@@ -223,7 +223,7 @@ test "$canon_debug_file" = "$canon_debug_id_file" \
 hello debuginfo build-id files: 3
 ],
 [ignore])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check if rpmbuild "separate" generates main and debuginfo buildid symlinks
@@ -231,7 +231,7 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid separate])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 
 # Build, contains one ELF which should have a buildid.
@@ -239,7 +239,7 @@ rundebug rpmbuild \
   --define="_build_id_links separate" \
   --undefine "_unique_debug_names" \
   --undefine "_unique_debug_srcs" \
-  --quiet -ba "${abs_srcdir}"/data/SPECS/hello.spec
+  --quiet -ba ${RPMDATA}/SPECS/hello.spec
 
 # There should be one build-id files in the main and debuginfo package
 # plus the .build-id/xx subdir, 2 in total.
@@ -311,7 +311,7 @@ test "$canon_debug_file" = "$canon_debug_id_file" \
 hello debuginfo build-id files: 2
 ],
 [ignore])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check if rpmbuild "separate" generates main and debuginfo buildid symlinks
@@ -319,14 +319,14 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid separate unique debug names])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 
 # Build, contains one ELF which should have a buildid.
 rundebug rpmbuild \
   --define="_build_id_links separate" \
   --define="_unique_debug_names 1" \
-  --quiet -ba "${abs_srcdir}"/data/SPECS/hello.spec
+  --quiet -ba ${RPMDATA}/SPECS/hello.spec
 
 # There should be one build-id files in the main and debuginfo package
 # plus the .build-id/xx subdir, 2 in total.
@@ -398,7 +398,7 @@ test "$canon_debug_file" = "$canon_debug_id_file" \
 hello debuginfo build-id files: 2
 ],
 [ignore])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check if rpmbuild "compat" generates main and debuginfo buildid symlinks
@@ -406,7 +406,7 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid compat])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 
 # Build, contains one ELF which should have a buildid.
@@ -414,7 +414,7 @@ rundebug rpmbuild \
   --define="_build_id_links compat" \
   --undefine "_unique_debug_names" \
   --undefine "_unique_debug_srcs" \
-  --quiet -ba "${abs_srcdir}"/data/SPECS/hello.spec
+  --quiet -ba ${RPMDATA}/SPECS/hello.spec
 
 # There should be one build-id files in the main and debuginfo package.
 # the debuginfo package has one extra main build-id compat symlink
@@ -499,7 +499,7 @@ test "$canon_compat_file" = "$canon_main_file" \
 hello debuginfo build-id files: 3
 ],
 [ignore])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check if rpmbuild "compat" generates main and debuginfo buildid symlinks
@@ -507,14 +507,14 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid compat unique debug names])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 
 # Build, contains one ELF which should have a buildid.
 rundebug rpmbuild \
   --define="_build_id_links compat" \
   --define="_unique_debug_names 1" \
-  --quiet -ba "${abs_srcdir}"/data/SPECS/hello.spec
+  --quiet -ba ${RPMDATA}/SPECS/hello.spec
 
 # There should be one build-id files in the main and debuginfo package.
 # the debuginfo package has one extra main build-id compat symlink
@@ -599,7 +599,7 @@ test "$canon_compat_file" = "$canon_main_file" \
 hello debuginfo build-id files: 3
 ],
 [ignore])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check that (copied) files with duplicate build-ids are handled correctly.
@@ -608,12 +608,12 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid duplicate alldebug])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 # Should create two warnings
 rundebug rpmbuild --quiet \
   --define="_build_id_links alldebug" \
-  -ba "${abs_srcdir}"/data/SPECS/hello2cp.spec 2>&1 | grep "^warning: " \
+  -ba ${RPMDATA}/SPECS/hello2cp.spec 2>&1 | grep "^warning: " \
   | cut -f1-3 -d' '
 
 rpm2cpio ${RPMTEST}/build/RPMS/*/hello2-1.0-1.*.rpm \
@@ -663,7 +663,7 @@ debug id in debug package
 debug dup id in debug package
 ],
 [])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check that hard linked files are handled correctly.
@@ -673,12 +673,12 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid hardlink alldebug])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 # No warnings for hard links
 rundebug rpmbuild --quiet \
   --define="_build_id_links alldebug" \
-  -ba "${abs_srcdir}"/data/SPECS/hello2ln.spec 2>&1 | grep "^warning: " \
+  -ba ${RPMDATA}/SPECS/hello2ln.spec 2>&1 | grep "^warning: " \
   | cut -f1-3 -d' '
 
 rpm2cpio ${RPMTEST}/build/RPMS/*/hello2-1.0-1.*.rpm \
@@ -726,7 +726,7 @@ debug id in debug package
 debug dup id in debug package
 ],
 [])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check that (copied) files with duplicate build-ids are handled correctly.
@@ -735,12 +735,12 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid duplicate separate])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 # Should create two warnings
 rundebug rpmbuild --quiet \
   --define="_build_id_links separate" \
-  -ba "${abs_srcdir}"/data/SPECS/hello2cp.spec 2>&1 | grep "^warning: " \
+  -ba ${RPMDATA}/SPECS/hello2cp.spec 2>&1 | grep "^warning: " \
   | cut -f1-3 -d' '
 
 rpm2cpio ${RPMTEST}/build/RPMS/*/hello2-1.0-1.*.rpm \
@@ -787,7 +787,7 @@ debug id in debug package
 debug dup id in debug package
 ],
 [])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check that hard linked files are handled correctly.
@@ -797,12 +797,12 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid hardlink separate])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 # No warnings for hard links
 rundebug rpmbuild --quiet \
   --define="_build_id_links separate" \
-  -ba "${abs_srcdir}"/data/SPECS/hello2ln.spec 2>&1 | grep "^warning: " \
+  -ba ${RPMDATA}/SPECS/hello2ln.spec 2>&1 | grep "^warning: " \
   | cut -f1-3 -d' '
 
 rpm2cpio ${RPMTEST}/build/RPMS/*/hello2-1.0-1.*.rpm \
@@ -847,7 +847,7 @@ debug id in debug package
 debug dup id in debug package
 ],
 [])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check that (copied) files with duplicate build-ids are handled correctly.
@@ -856,12 +856,12 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid duplicate compat])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 # Should create two warnings
 rundebug rpmbuild --quiet \
   --define="_build_id_links compat" \
-  -ba "${abs_srcdir}"/data/SPECS/hello2cp.spec 2>&1 | grep "^warning: " \
+  -ba ${RPMDATA}/SPECS/hello2cp.spec 2>&1 | grep "^warning: " \
   | cut -f1-3 -d' '
 
 rpm2cpio ${RPMTEST}/build/RPMS/*/hello2-1.0-1.*.rpm \
@@ -920,7 +920,7 @@ debug id in debug package
 debug dup id in debug package
 ],
 [])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check that hard linked files are handled correctly.
@@ -930,12 +930,12 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid hardlink compat])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 # No warnings for hard links
 rundebug rpmbuild --quiet \
   --define="_build_id_links compat" \
-  -ba "${abs_srcdir}"/data/SPECS/hello2ln.spec 2>&1 | grep "^warning: " \
+  -ba ${RPMDATA}/SPECS/hello2ln.spec 2>&1 | grep "^warning: " \
   | cut -f1-3 -d' '
 
 rpm2cpio ${RPMTEST}/build/RPMS/*/hello2-1.0-1.*.rpm \
@@ -992,7 +992,7 @@ debug id in debug package
 debug dup id in debug package
 ],
 [])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check build-ids are recomputed with unique_build_ids,
@@ -1000,7 +1000,7 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid recompute])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 # Make sure we get debuginfo
 export CFLAGS="-g"
@@ -1009,7 +1009,7 @@ export CFLAGS="-g"
 rundebug rpmbuild --quiet \
   --define="_unique_build_ids 1" \
   --undefine="_no_recompute_build_ids" \
-  -ba "${abs_srcdir}"/data/SPECS/hello.spec
+  -ba ${RPMDATA}/SPECS/hello.spec
 
 rpm2cpio ${RPMTEST}/build/RPMS/*/hello-1.0-1.*.rpm \
   | cpio -diu --quiet
@@ -1028,7 +1028,7 @@ rm $hello_file
 rundebug rpmbuild --quiet \
   --define="_unique_build_ids 1" \
   --undefine="_no_recompute_build_ids" \
-  -ba "${abs_srcdir}"/data/SPECS/hello-r2.spec
+  -ba ${RPMDATA}/SPECS/hello-r2.spec
 
 rpm2cpio ${RPMTEST}/build/RPMS/*/hello-1.0-2.*.rpm \
   | cpio -diu --quiet
@@ -1053,7 +1053,7 @@ rundebug rpmbuild --quiet \
   --undefine="_unique_debug_names" \
   --undefine="_unique_debug_srcs" \
   --define="_no_recompute_build_ids 1" \
-  -ba "${abs_srcdir}"/data/SPECS/hello.spec
+  -ba ${RPMDATA}/SPECS/hello.spec
 
 rpm2cpio ${RPMTEST}/build/RPMS/*/hello-1.0-1.*.rpm \
   | cpio -diu --quiet
@@ -1081,7 +1081,7 @@ rundebug rpmbuild --quiet \
   --undefine="_unique_debug_names" \
   --undefine="_unique_debug_srcs" \
   --define="_no_recompute_build_ids 1" \
-  -ba "${abs_srcdir}"/data/SPECS/hello-r2.spec
+  -ba ${RPMDATA}/SPECS/hello-r2.spec
 
 rpm2cpio ${RPMTEST}/build/RPMS/*/hello-1.0-2.*.rpm \
   | cpio -diu --quiet
@@ -1103,7 +1103,7 @@ no-recompute unique unequal
 no-recomputes equal
 ],
 [ignore])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check build-ids are unique between versions/releases
@@ -1111,12 +1111,12 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid unique r1 r2])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 # No warnings for hard links
 rundebug rpmbuild --quiet \
   --define="_unique_build_ids 1" \
-  -ba "${abs_srcdir}"/data/SPECS/hello.spec
+  -ba ${RPMDATA}/SPECS/hello.spec
 
 rpm2cpio ${RPMTEST}/build/RPMS/*/hello-1.0-1.*.rpm \
   | cpio -diu --quiet
@@ -1133,7 +1133,7 @@ rm $hello_file
 # Build the "next" release, which has no changes except for the release update.
 rundebug rpmbuild --quiet \
   --define="_unique_build_ids 1" \
-  -ba "${abs_srcdir}"/data/SPECS/hello-r2.spec
+  -ba ${RPMDATA}/SPECS/hello-r2.spec
 
 rpm2cpio ${RPMTEST}/build/RPMS/*/hello-1.0-2.*.rpm \
   | cpio -diu --quiet
@@ -1148,7 +1148,7 @@ if test "$id1" == "$id2"; then echo "equal $id1"; else echo "unequal"; fi
 [unequal
 ],
 [ignore])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check build-ids are non-unique between versions/releases
@@ -1156,14 +1156,14 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid non-unique r1 r2])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 # No warnings for hard links
 rundebug rpmbuild --quiet \
   --undefine="_unique_build_ids" \
   --undefine="_unique_debug_names" \
   --undefine="_unique_debug_srcs" \
-  -ba "${abs_srcdir}"/data/SPECS/hello.spec
+  -ba ${RPMDATA}/SPECS/hello.spec
 
 rpm2cpio ${RPMTEST}/build/RPMS/*/hello-1.0-1.*.rpm \
   | cpio -diu --quiet
@@ -1182,7 +1182,7 @@ rundebug rpmbuild --quiet \
   --undefine="_unique_build_ids" \
   --undefine="_unique_debug_names" \
   --undefine="_unique_debug_srcs" \
-  -ba "${abs_srcdir}"/data/SPECS/hello-r2.spec
+  -ba ${RPMDATA}/SPECS/hello-r2.spec
 
 rpm2cpio ${RPMTEST}/build/RPMS/*/hello-1.0-2.*.rpm \
   | cpio -diu --quiet
@@ -1197,7 +1197,7 @@ if test "$id1" == "$id2"; then echo "equal"; else echo "unequal $id1 $id2"; fi
 [equal
 ],
 [ignore])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check that build-id directories are created with the right permissions
@@ -1205,7 +1205,7 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid attrs])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 
 # Build, contains one ELF which should have a buildid.
@@ -1213,7 +1213,7 @@ rundebug rpmbuild \
   --define="_build_id_links compat" \
   --define "_unique_debug_names 1" \
   --define "_unique_debug_srcs 1" \
-  --quiet -ba "${abs_srcdir}"/data/SPECS/hello-attr-buildid.spec
+  --quiet -ba ${RPMDATA}/SPECS/hello-attr-buildid.spec
 
 runroot rpm -qp --qf "[[%{filenames} %{filemodes:perms}\n]]" \
         /build/RPMS/*/test-1.0-1*rpm \
@@ -1228,7 +1228,7 @@ runroot rpm -qp --qf "[[%{filenames} %{filemodes:perms}\n]]" \
 /usr/lib/debug/.build-id drwxr-xr-x
 ],
 [ignore])
-AT_CLEANUP
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check that build-id directories are created with the right attributes
@@ -1236,7 +1236,7 @@ AT_CLEANUP
 AT_SETUP([rpmbuild buildid config attrs])
 AT_KEYWORDS([build] [debuginfo] [buildid])
 AT_SKIP_IF([$DEBUGINFO_DISABLED])
-AT_CHECK([
+RPMTEST_CHECK([
 RPMDB_INIT
 
 # Build, contains one ELF which should have a buildid.
@@ -1244,7 +1244,7 @@ rundebug rpmbuild \
   --define="_build_id_links compat" \
   --define "_unique_debug_names 1" \
   --define "_unique_debug_srcs 1" \
-  --quiet -ba "${abs_srcdir}"/data/SPECS/hello-config-buildid.spec
+  --quiet -ba ${RPMDATA}/SPECS/hello-config-buildid.spec
 
 # Should contain one config file.
 runroot rpm -c -qp /build/RPMS/*/test-1.0-1*rpm
@@ -1255,4 +1255,4 @@ runroot rpm -c -qp /build/RPMS/*/test-debuginfo-1.0-1*rpm
 [/etc/config.file
 ],
 [ignore])
-AT_CLEANUP
+RPMTEST_CLEANUP

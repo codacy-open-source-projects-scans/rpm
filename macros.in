@@ -23,7 +23,7 @@
 # ---- Generally useful path macros.
 #
 %__7zip			@__7ZIP@
-%__awk			@AWK@
+%__awk			@__AWK@
 %__bzip2		@__BZIP2@
 %__cat			@__CAT@
 %__chmod		@__CHMOD@
@@ -60,11 +60,11 @@
 #==============================================================================
 # ---- Build system path macros.
 #
-%__ar			@AR@
-%__as			@AS@
+%__ar			@__AR@
+%__as			@__AS@
 %__cc			@__CC@
-%__cpp			@CPP@
-%__cxx			@CXX@
+%__cpp			@__CPP@
+%__cxx			@__CXX@
 %__ld			@__LD@
 %__objdump		@__OBJDUMP@
 %__strip		@__STRIP@
@@ -132,8 +132,12 @@
 
 %_keyringpath		%{_dbpath}/pubkeys/
 
-# sysusers helper binary or script, uncomment to disable
-%__systemd_sysusers	%{_bindir}/systemd-sysusers
+# Location of passwd(5) and group(5)
+%_passwd_path		/etc/passwd
+%_group_path		/etc/group
+
+# sysusers helper binary (or a replacement script), uncomment to disable
+%__systemd_sysusers	@__SYSTEMD_SYSUSERS@
 
 #
 #	Path to script that creates debug symbols in a /usr/lib/debug
@@ -771,6 +775,7 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
   export LANG\
   unset CDPATH DISPLAY ||:\
   unset DEBUGINFOD_URLS ||:\
+  unset RPM_CONFIG_DIR ||:\
   %{?buildroot:RPM_BUILD_ROOT=\"%{buildroot}\"\
   export RPM_BUILD_ROOT}\
   %{?_javaclasspath:CLASSPATH=\"%{_javaclasspath}\"\
