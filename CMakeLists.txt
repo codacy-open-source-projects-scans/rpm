@@ -70,7 +70,8 @@ function(makemacros)
 	set(oldincludedir "${CMAKE_INSTALL_FULL_OLDINCLUDEDIR}")
 	set(infodir "\${prefix}/${CMAKE_INSTALL_INFODIR}")
 	set(mandir "\${prefix}/${CMAKE_INSTALL_MANDIR}")
-	set(RUNDIR /run)
+	set(rundir /run)
+	set(root_prefix /usr)
 
 	set(extutils
 		7zip bzip2 cat chmod chown cp curl file gpg grep gzip id cc ln
