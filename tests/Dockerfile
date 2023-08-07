@@ -11,6 +11,7 @@ RUN dnf -y update
 RUN dnf -y --enablerepo=updates-testing install "rpm-sequoia-devel >= 1.4.0"
 RUN dnf -y install \
   autoconf \
+  bubblewrap \
   cmake \
   gettext-devel \
   debugedit \
@@ -40,7 +41,7 @@ RUN dnf -y install \
   lua-devel readline-devel \
   python3-devel \
   dbus-devel \
-  fakechroot which \
+  which \
   elfutils binutils \
   findutils sed grep gawk diffutils file patch \
   tar unzip gzip bzip2 cpio xz \
@@ -58,11 +59,21 @@ RUN chmod -R a-w .
 
 WORKDIR /srv/build
 RUN cmake \
-	-DCMAKE_INSTALL_PREFIX=$(mktemp -d) \
 	-DENABLE_WERROR=ON \
 	-DENABLE_BDB_RO=ON \
 	-DWITH_FSVERITY=ON \
 	-DWITH_IMAEVM=ON \
+	-DMKTREE_BACKEND=rootfs \
 	../rpm
+RUN rpm -e --nodeps \
+	rpm \
+	rpm-libs \
+	rpm-build-libs \
+	rpm-sign-libs \
+	python3-rpm
+RUN make tree
 
-CMD make -j$(nproc) check; rc=$?; find . -name rpmtests.log|xargs cat; exit $rc
+WORKDIR /
+RUN rm -rf /srv/{rpm,build}
+
+CMD /bin/bash

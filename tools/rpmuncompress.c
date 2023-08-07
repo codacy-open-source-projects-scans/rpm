@@ -1,6 +1,7 @@
 #include "system.h"
 
 #include <popt.h>
+#include <libgen.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -97,7 +98,8 @@ static char *doUntar(const char *fn)
 	if (needtar) {
 	    rasprintf(&buf, "%s '%s' | %s %s -", zipper, fn, tar, taropts);
 	} else if (at->compressed == COMPRESSED_GEM) {
-	    const char *bn = basename(fn);
+	    char *tmp = xstrdup(fn);
+	    const char *bn = basename(tmp);
 	    size_t nvlen = strlen(bn) - 3;
 	    char *gem = rpmGetPath("%{__gem}", NULL);
 	    char *gemspec = NULL;
@@ -111,6 +113,7 @@ static char *doUntar(const char *fn)
 
 	    free(gemspec);
 	    free(gem);
+	    free(tmp);
 	} else {
 	    rasprintf(&buf, "%s '%s'", zipper, fn);
 	}

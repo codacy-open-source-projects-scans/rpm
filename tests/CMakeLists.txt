@@ -2,6 +2,19 @@
 # needs to be built before we can populate anything...
 get_property(TOP_TARGETS DIRECTORY .. PROPERTY BUILDSYSTEM_TARGETS)
 
+function(os_release var key)
+	execute_process(
+		COMMAND sh -c "grep ^${key} /etc/os-release | cut -d= -f2"
+		OUTPUT_STRIP_TRAILING_WHITESPACE
+		OUTPUT_VARIABLE value
+	)
+	string(TOLOWER ${value} value)
+	set(${var} ${value} PARENT_SCOPE)
+endfunction()
+
+os_release(OS_NAME ID)
+os_release(OS_VERSION VERSION_ID)
+
 set(PYTHON ${Python3_EXECUTABLE})
 if (${WITH_INTERNAL_OPENPGP})
 	if (${WITH_OPENSSL})
@@ -42,7 +55,6 @@ set(TESTSUITE_AT
 	rpmpgp.at
 )
 
-find_program(FAKECHROOT fakechroot REQUIRED)
 find_program(AUTOM4TE autom4te REQUIRED)
 set(AUTOTEST ${AUTOM4TE} --language=autotest)
 
@@ -51,10 +63,7 @@ foreach(prg ${TESTPROGS})
 	add_executable(${prg} EXCLUDE_FROM_ALL ${prg}.c)
 	target_link_libraries(${prg} PRIVATE librpmio)
 endforeach()
-
-configure_file(atlocal.in atlocal @ONLY)
-configure_file(package.m4.in package.m4 @ONLY)
-configure_file(mktree.in mktree @ONLY)
+string(REPLACE ";" " " TESTPROG_NAMES "${TESTPROGS}")
 
 include(ProcessorCount)
 ProcessorCount(nproc)
@@ -62,9 +71,61 @@ if (nproc GREATER 1)
 	set(JOBS -j${nproc})
 endif()
 
+# Detect suitable mktree backend
+find_program(BWRAP bwrap)
+find_program(PODMAN NAMES podman docker)
+if ("${MKTREE_BACKEND}" STREQUAL "")
+	if (BWRAP AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mktree.${OS_NAME})
+		set(MKTREE_BACKEND ${OS_NAME})
+	elseif (PODMAN)
+		set(MKTREE_BACKEND podman)
+	else()
+		message(WARNING
+			"No suitable mktree backend found for this platform. "
+			"Disabling test-suite.")
+		return()
+	endif()
+endif()
+message(STATUS "Using mktree backend: ${MKTREE_BACKEND}")
+
+# Set up mktree
+if ("${MKTREE_BACKEND}" STREQUAL "podman")
+	find_program(PODMAN NAMES podman docker REQUIRED)
+	configure_file(Dockerfile Dockerfile COPYONLY)
+else()
+	find_program(BWRAP bwrap REQUIRED)
+	if (PODMAN)
+		get_filename_component(PODMAN ${PODMAN} NAME)
+		add_custom_target(ci
+			COMMAND ./mktree.${PODMAN} build
+			COMMAND ./mktree.${PODMAN} check ${JOBS} $(TESTOPTS)
+			WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+		)
+	endif()
+endif()
+configure_file(mktree.common mktree.common @ONLY)
+configure_file(mktree.${MKTREE_BACKEND} mktree @ONLY)
+
+configure_file(atlocal.in atlocal @ONLY)
+configure_file(package.m4.in package.m4 @ONLY)
+
+add_custom_target(env
+	COMMAND ./mktree env
+	DEPENDS tree
+)
+
+add_custom_target(shell
+	COMMAND ./mktree shell
+	DEPENDS tree
+)
+
 add_custom_target(check
 	COMMAND ./mktree check ${JOBS} $(TESTOPTS)
 	DEPENDS tree
+)
+
+add_custom_target(reset
+	COMMAND ./mktree reset
 )
 
 add_custom_command(OUTPUT rpmtests
@@ -76,14 +137,8 @@ add_custom_command(OUTPUT rpmtests
 
 add_custom_target(tree
 	COMMAND ./mktree build
+	BYPRODUCTS mktree.output/base
 	DEPENDS rpmtests
 	DEPENDS ${TESTPROGS}
 	DEPENDS ${TOP_TARGETS}
-)
-
-add_custom_command(TARGET tree POST_BUILD
-	COMMAND chmod -R u-w mktree.output/tree
-)
-add_custom_command(TARGET check POST_BUILD
-	COMMAND chmod -R u+w mktree.output/tree
 )
