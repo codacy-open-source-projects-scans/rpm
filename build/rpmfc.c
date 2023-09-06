@@ -38,6 +38,7 @@ typedef struct rpmfcAttr_s {
     char *name;
     struct matchRule incl;
     struct matchRule excl;
+    char *proto;
 } * rpmfcAttr;
 
 typedef struct {
@@ -51,14 +52,14 @@ typedef struct {
     int alloced;
 } rpmfcFileDeps;
 
-#undef HASHTYPE
-#undef HTKEYTYPE
-#undef HTDATATYPE
 #define HASHTYPE fattrHash
 #define HTKEYTYPE int
 #define HTDATATYPE int
 #include "lib/rpmhash.H"
 #include "lib/rpmhash.C"
+#undef HASHTYPE
+#undef HTKEYTYPE
+#undef HTDATATYPE
 
 struct rpmfc_s {
     Package pkg;
@@ -198,6 +199,7 @@ static rpmfcAttr rpmfcAttrNew(const char *name)
     struct matchRule *rules[] = { &attr->incl, &attr->excl, NULL };
 
     attr->name = xstrdup(name);
+    attr->proto = rpmfcAttrMacro(name, "protocol", NULL);
     for (struct matchRule **rule = rules; rule && *rule; rule++) {
 	const char *prefix = (*rule == &attr->incl) ? NULL : "exclude";
 	char *flags;
@@ -237,6 +239,7 @@ static rpmfcAttr rpmfcAttrFree(rpmfcAttr attr)
 	ruleFree(&attr->incl);
 	ruleFree(&attr->excl);
 	rfree(attr->name);
+	rfree(attr->proto);
 	rfree(attr);
     }
     return NULL;
@@ -523,7 +526,7 @@ static void rpmfcAddFileDep(rpmfcFileDeps *fileDeps, rpmds ds, int ix)
     fileDeps->data[fileDeps->size++].dep = ds;
 }
 
-static ARGV_t runCmd(const char *name, const char *buildRoot, const char *fn)
+static ARGV_t runCmd(const char *name, const char *buildRoot, ARGV_t fns)
 {
     ARGV_t output = NULL;
     ARGV_t av = NULL;
@@ -533,7 +536,8 @@ static ARGV_t runCmd(const char *name, const char *buildRoot, const char *fn)
 
     argvAdd(&av, cmd);
 
-    appendLineStringBuf(sb_stdin, fn);
+    for (ARGV_t fn = fns; fn && *fn; fn++)
+	appendLineStringBuf(sb_stdin, *fn);
     if (rpmfcExec(av, sb_stdin, &sb_stdout, 0, buildRoot) == 0) {
 	argvSplit(&output, getStringBuf(sb_stdout), "\n\r");
     }
@@ -546,7 +550,7 @@ static ARGV_t runCmd(const char *name, const char *buildRoot, const char *fn)
     return output;
 }
 
-static ARGV_t runCall(const char *name, const char *buildRoot, const char *fn)
+static ARGV_t runCall(const char *name, const char *buildRoot, ARGV_t fns)
 {
     ARGV_t output = NULL;
     ARGV_t args = NULL;
@@ -555,10 +559,13 @@ static ARGV_t runCall(const char *name, const char *buildRoot, const char *fn)
 
     if (*opt)
 	argvAdd(&args, opt);
-    argvAdd(&args, fn);
+    argvAppend(&args, fns);
 
-    if (_rpmfc_debug)
-	rpmlog(RPMLOG_DEBUG, "Calling %s(%s) on %s\n", name, opt, fn);
+    if (_rpmfc_debug) {
+	char *paths = argvJoin(fns, "\n");
+	rpmlog(RPMLOG_DEBUG, "Calling %s(%s) on %s\n", name, opt, paths);
+	free(paths);
+    }
 
     if (rpmExpandThisMacro(NULL, name, args, &exp, 0) >= 0)
 	argvSplit(&output, exp, "\n\r");
@@ -614,46 +621,96 @@ static void exclFini(struct exclreg_s *excl)
     memset(excl, 0, sizeof(*excl));
 }
 
-static int rpmfcHelper(rpmfc fc, int ix, const struct exclreg_s *excl,
+static int genDeps(const char *mname, int multifile, rpmTagVal tagN,
+		rpmsenseFlags dsContext, struct addReqProvDataFc *data,
+		int *fnx, int nfn, int fx, ARGV_t paths)
+{
+    rpmfc fc = data->fc;
+    ARGV_t pav = NULL;
+    int rc = 0;
+
+    if (rpmMacroIsParametric(NULL, mname)) {
+	pav = runCall(mname, fc->buildRoot, paths);
+    } else {
+	pav = runCmd(mname, fc->buildRoot, paths);
+    }
+
+    for (int px = 0, pac = argvCount(pav); px < pac; px++) {
+	if (multifile && *pav[px] == ';') {
+	    int found = 0;
+	    /* Look forward to allow generators to omit files without deps */
+	    do {
+		fx++;
+		if (rstreq(pav[px]+1, paths[fx]))
+		    found = 1;
+	    } while (!found && fx < nfn);
+
+	    if (!found) {
+		rpmlog(RPMLOG_ERR,
+			_("invalid or out of order path from generator: %s\n"),
+			pav[px]);
+		rc++;
+		break;
+	    }
+	    continue;
+	}
+
+	if (parseRCPOT(NULL, fc->pkg, pav[px], tagN, fnx[fx],
+			dsContext, addReqProvFc, data)) {
+	    rc++;
+	}
+    }
+    argvFree(pav);
+
+    return rc;
+}
+
+static int rpmfcHelper(rpmfc fc, int *ixs, int n, const char *proto,
+		       const struct exclreg_s *excl,
 		       rpmsenseFlags dsContext, rpmTagVal tagN,
 		       const char *namespace, const char *mname)
 {
-    ARGV_t pav = NULL;
-    const char * fn = fc->fn[ix];
-    int pac;
     int rc = 0;
+    const char **paths = xcalloc(n + 1, sizeof(*paths));
+    int *fnx = xmalloc(n * sizeof(*fnx));
+    int nfn = 0;
 
-    /* If the entire path is filtered out, there's nothing more to do */
-    if (regMatch(excl->exclude_from, fn+fc->brlen))
-	goto exit;
+    for (int i = 0; i < n; i++) {
+	int fx = ixs[i];
+	const char *fn = fc->fn[fx];
+	/* If the entire path is filtered out, there's nothing more to do */
+	if (regMatch(excl->exclude_from, fn+fc->brlen))
+	    continue;
 
-    if (regMatch(excl->global_exclude_from, fn+fc->brlen))
-	goto exit;
+	if (regMatch(excl->global_exclude_from, fn+fc->brlen))
+	    continue;
 
-    if (rpmMacroIsParametric(NULL, mname)) {
-	pav = runCall(mname, fc->buildRoot, fn);
-    } else {
-	pav = runCmd(mname, fc->buildRoot, fn);
+	paths[nfn] = fn;
+	fnx[nfn] = fx;
+	nfn++;
     }
-
-    if (pav == NULL)
-	goto exit;
-
-    pac = argvCount(pav);
+    paths[nfn] = NULL;
 
     struct addReqProvDataFc data;
     data.fc = fc;
     data.namespace = namespace;
     data.exclude = excl->exclude;
 
-    for (int i = 0; i < pac; i++) {
-	if (parseRCPOT(NULL, fc->pkg, pav[i], tagN, ix, dsContext, addReqProvFc, &data))
-	    rc++;
+    if (proto && rstreq(proto, "multifile")) {
+	rc = genDeps(mname, 1, tagN, dsContext, &data,
+			fnx, nfn, -1, (ARGV_t) paths);
+    } else {
+	for (int i = 0; i < nfn; i++) {
+	    const char *fn = fc->fn[fnx[i]];
+	    const char *paths[] = { fn, NULL };
+
+	    rc += genDeps(mname, 0, tagN, dsContext, &data,
+			fnx, nfn, i, (ARGV_t) paths);
+	}
     }
+    free(fnx);
+    free(paths);
 
-    argvFree(pav);
-
-exit:
     return rc;
 }
 
@@ -1031,7 +1088,8 @@ static const struct applyDep_s applyDepTable[] = {
     { 0, 0, NULL },
 };
 
-static int applyAttr(rpmfc fc, int aix, const char *aname,
+static int applyAttr(rpmfc fc, int aix,
+			const struct rpmfcAttr_s *attr,
 			const struct exclreg_s *excl,
 			const struct applyDep_s *dep)
 {
@@ -1039,15 +1097,13 @@ static int applyAttr(rpmfc fc, int aix, const char *aname,
     int n, *ixs;
 
     if (fattrHashGetEntry(fc->fahash, aix, &ixs, &n, NULL)) {
+	const char *aname = attr->name;
 	char *mname = rstrscat(NULL, "__", aname, "_", dep->name, NULL);
 
 	if (rpmMacroIsDefined(NULL, mname)) {
 	    char *ns = rpmfcAttrMacro(aname, "namespace", NULL);
-	    for (int i = 0; i < n; i++) {
-		if (rpmfcHelper(fc, ixs[i], excl, dep->type, dep->tag,
-				ns, mname))
-		    rc = 1;
-	    }
+	    rc = rpmfcHelper(fc, ixs, n, attr->proto,
+			    excl, dep->type, dep->tag, ns, mname);
 	    free(ns);
 	}
 	free(mname);
@@ -1079,7 +1135,7 @@ static rpmRC rpmfcApplyInternal(rpmfc fc)
 	    continue;
 	exclInit(dep->name, &excl);
 	for (rpmfcAttr *attr = fc->atypes; attr && *attr; attr++, aix++) {
-	    if (applyAttr(fc, aix, (*attr)->name, &excl, dep))
+	    if (applyAttr(fc, aix, (*attr), &excl, dep))
 		rc = RPMRC_FAIL;
 	}
 	exclFini(&excl);
