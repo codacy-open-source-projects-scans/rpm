@@ -35,6 +35,7 @@ endif()
 if(WITH_FSVERITY)
 	add_library(fsverity MODULE fsverity.c)
 	target_link_libraries(fsverity PRIVATE PkgConfig::FSVERITY)
+	target_include_directories(fsverity PRIVATE ${CMAKE_SOURCE_DIR}/sign)
 endif()
 
 set(plugindir ${CMAKE_INSTALL_FULL_LIBDIR}/rpm-plugins)

@@ -8,7 +8,7 @@
 #include <rpm/header.h>
 #include <rpm/rpmtag.h>
 #include <rpm/rpmstring.h>
-#include "lib/misc.h"		/* format function protos */
+#include "misc.h"		/* format function protos */
 
 #include "debug.h"
 
@@ -64,8 +64,8 @@ struct sprintfToken_s {
 #define HASHTYPE tagCache
 #define HTKEYTYPE rpmTagVal
 #define HTDATATYPE rpmtd
-#include "lib/rpmhash.H"
-#include "lib/rpmhash.C"
+#include "rpmhash.H"
+#include "rpmhash.C"
 #undef HASHTYPE
 #undef HTKEYTYPE
 #undef HTDATATYPE

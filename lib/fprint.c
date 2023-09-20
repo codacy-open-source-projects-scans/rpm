@@ -9,11 +9,11 @@
 #include <rpm/rpmts.h>
 #include <rpm/rpmsq.h>
 
-#include "lib/rpmdb_internal.h"
-#include "lib/rpmfi_internal.h"
-#include "lib/rpmte_internal.h"
-#include "lib/fprint.h"
-#include "lib/misc.h"
+#include "rpmdb_internal.h"
+#include "rpmfi_internal.h"
+#include "rpmte_internal.h"
+#include "fprint.h"
+#include "misc.h"
 #include "debug.h"
 #include <libgen.h>
 
@@ -21,8 +21,8 @@
 #define HASHTYPE rpmFpEntryHash
 #define HTKEYTYPE rpmsid
 #define HTDATATYPE const struct fprintCacheEntry_s *
-#include "lib/rpmhash.H"
-#include "lib/rpmhash.C"
+#include "rpmhash.H"
+#include "rpmhash.C"
 #undef HASHTYPE
 #undef HTKEYTYPE
 #undef HTDATATYPE
@@ -31,8 +31,8 @@
 #define HASHTYPE rpmFpHash
 #define HTKEYTYPE const fingerPrint *
 #define HTDATATYPE struct rpmffi_s
-#include "lib/rpmhash.H"
-#include "lib/rpmhash.C"
+#include "rpmhash.H"
+#include "rpmhash.C"
 #undef HASHTYPE
 #undef HTKEYTYPE
 #undef HTDATATYPE

@@ -12,6 +12,12 @@ target_compile_definitions(librpm PRIVATE
 	LIBRPMALIAS_EXECPATH="${CMAKE_INSTALL_FULL_BINDIR}"
 )
 
+target_include_directories(librpm PRIVATE
+	${CMAKE_CURRENT_SOURCE_DIR}
+	${CMAKE_SOURCE_DIR}/rpmio
+	${CMAKE_CURRENT_BINARY_DIR}
+)
+
 target_sources(librpm PRIVATE
 	backend/dbi.c backend/dbi.h backend/dummydb.c
 	backend/dbiset.c backend/dbiset.h
@@ -30,7 +36,7 @@ target_sources(librpm PRIVATE
 	verify.c rpmlock.c rpmlock.h misc.h relocation.c
 	rpmscript.h rpmscript.c
 	rpmchroot.c rpmchroot.h
-	rpmplugins.c rpmplugins.h rpmplugin.h rpmug.c rpmug.h
+	rpmplugins.c rpmplugins.h rpmug.c rpmug.h
 	rpmtriggers.h rpmtriggers.c rpmvs.c rpmvs.h
 )
 

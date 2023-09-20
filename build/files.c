@@ -27,12 +27,12 @@
 #include <rpm/rpmlog.h>
 #include <rpm/rpmbase64.h>
 
-#include "rpmio/rpmio_internal.h"	/* XXX rpmioSlurp */
-#include "misc/rpmfts.h"
-#include "lib/rpmfi_internal.h"	/* XXX fi->apath */
-#include "lib/rpmug.h"
-#include "build/rpmbuild_internal.h"
-#include "build/rpmbuild_misc.h"
+#include "rpmio_internal.h"	/* XXX rpmioSlurp */
+#include "rpmfts.h"
+#include "rpmfi_internal.h"	/* XXX fi->apath */
+#include "rpmug.h"
+#include "rpmbuild_internal.h"
+#include "rpmbuild_misc.h"
 
 #include "debug.h"
 #include <libgen.h>
@@ -54,7 +54,7 @@
 #define HASHTYPE fileRenameHash
 #define HTKEYTYPE const char *
 #define HTDATATYPE const char *
-#include "lib/rpmhash.C"
+#include "rpmhash.C"
 #undef HASHTYPE
 #undef HTKEYTYPE
 #undef HTDATATYPE

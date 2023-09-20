@@ -19,9 +19,9 @@
 #include <rpm/rpmstring.h>
 #include <rpm/rpmmacro.h>
 #include <rpm/rpmpgp.h>
+#include <rpm/rpmplugin.h>
 
-#include "lib/rpmplugin.h"
-#include "sign/rpmsignverity.h"
+#include "rpmsignverity.h"
 
 static int sign_config_files = 0;
 

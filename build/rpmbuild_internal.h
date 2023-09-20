@@ -4,13 +4,13 @@
 #include <rpm/rpmbuild.h>
 #include <rpm/rpmutil.h>
 #include <rpm/rpmstrpool.h>
-#include "build/rpmbuild_misc.h"
-#include "rpmio/rpmlua.h"
+#include "rpmbuild_misc.h"
+#include "rpmlua.h"
 
 #define HASHTYPE fileRenameHash
 #define HTKEYTYPE const char *
 #define HTDATATYPE const char *
-#include "lib/rpmhash.H"
+#include "rpmhash.H"
 #undef HASHTYPE
 #undef HTKEYTYPE
 #undef HTDATATYPE
