@@ -226,31 +226,6 @@ static void addRpmTags(PyObject *module)
     rpmtdFree(names);
 }
 
-/*
-  Do any common preliminary work before python 2 vs python 3 module creation:
-*/
-static int prepareInitModule(void)
-{
-    if (PyType_Ready(&hdr_Type) < 0) return 0;
-    if (PyType_Ready(&rpmarchive_Type) < 0) return 0;
-    if (PyType_Ready(&rpmds_Type) < 0) return 0;
-    if (PyType_Ready(&rpmfd_Type) < 0) return 0;
-    if (PyType_Ready(&rpmfile_Type) < 0) return 0;
-    if (PyType_Ready(&rpmfiles_Type) < 0) return 0;
-    if (PyType_Ready(&rpmKeyring_Type) < 0) return 0;
-    if (PyType_Ready(&rpmmi_Type) < 0) return 0;
-    if (PyType_Ready(&rpmii_Type) < 0) return 0;
-    if (PyType_Ready(&rpmProblem_Type) < 0) return 0;
-    if (PyType_Ready(&rpmPubkey_Type) < 0) return 0;
-    if (PyType_Ready(&rpmstrPool_Type) < 0) return 0;
-    if (PyType_Ready(&rpmte_Type) < 0) return 0;
-    if (PyType_Ready(&rpmts_Type) < 0) return 0;
-    if (PyType_Ready(&rpmver_Type) < 0) return 0;
-    if (PyType_Ready(&spec_Type) < 0) return 0;
-    if (PyType_Ready(&specPkg_Type) < 0) return 0;
-
-    return 1;
-}
 static int initModule(PyObject *m);
 
 static int rpmModuleTraverse(PyObject *m, visitproc visit, void *arg) {
@@ -278,14 +253,58 @@ static struct PyModuleDef moduledef = {
 PyObject *
 PyInit__rpm(void);
 
+static int moduleInitialized = 0;
+
 PyObject *
 PyInit__rpm(void)
 {
+    /* We store pointers to our Python type objects in global variables,
+     * which would get clobbered if the initialization code could run
+     * several times. Explicitly disallow that.
+     *
+     * This means the extension cannot be unloaded and reloaded, nor used
+     * in multiple Python interpreters. The limitation could be lifted
+     * in the future by:
+     * - storing *_Type in module state rather than C static variables.
+     * - implementing traverse, clear & dealloc slots for proper reference
+     *   counting (right now the types are treated as immortal).
+     */
+
+    if (moduleInitialized) {
+        PyErr_SetString(PyExc_ImportError,
+                        "cannot load rpm module more than once per process");
+        return NULL;
+    }
+    moduleInitialized = 1;
+
     PyObject * m;
-    if (!prepareInitModule()) return NULL;
     m = PyModule_Create(&moduledef);
     initModule(m);
     return m;
+}
+
+/* Create a type object based on a Spec, and add it to the module. */
+static int initAndAddType(PyObject *m, PyTypeObject **type, PyType_Spec *spec,
+                          char *name)
+{
+    if (!*type) {
+        *type = (PyTypeObject *)PyType_FromSpec(spec);
+        if (!*type) return 0;
+    }
+    /* We intentionally leak a reference to `type` (only once per type per
+     * process).
+     */
+    Py_INCREF(*type);
+    /* Reference counting for PyModule_AddObject is tricky (see
+     * PyModule_AddObject docs). But let's do it right, as if we haven't just
+     * leaked.
+     * (Simpler API, `PyModule_AddObjectRef`, is only in Python 3.10+.)
+     */
+    if (PyModule_AddObject(m, name, (PyObject *) *type) < 0) {
+        Py_DECREF(*type);
+        return 0;
+    }
+    return 1;
 }
 
 /* Module initialization: */
@@ -303,55 +322,72 @@ static int initModule(PyObject *m)
     if (pyrpmError != NULL)
 	PyDict_SetItemString(d, "error", pyrpmError);
 
-    Py_INCREF(&hdr_Type);
-    PyModule_AddObject(m, "hdr", (PyObject *) &hdr_Type);
+    if (!initAndAddType(m, &hdr_Type, &hdr_Type_Spec, "hdr")) {
+	return 0;
+    }
 
-    Py_INCREF(&rpmarchive_Type);
-    PyModule_AddObject(m, "archive", (PyObject *) &rpmarchive_Type);
+    if (!initAndAddType(m, &rpmarchive_Type, &rpmarchive_Type_Spec, "archive")) {
+	return 0;
+    }
 
-    Py_INCREF(&rpmds_Type);
-    PyModule_AddObject(m, "ds", (PyObject *) &rpmds_Type);
+    if (!initAndAddType(m, &rpmds_Type, &rpmds_Type_Spec, "ds")) {
+	return 0;
+    }
 
-    Py_INCREF(&rpmfd_Type);
-    PyModule_AddObject(m, "fd", (PyObject *) &rpmfd_Type);
+    if (!initAndAddType(m, &rpmfd_Type, &rpmfd_Type_Spec, "fd")) {
+	return 0;
+    }
 
-    Py_INCREF(&rpmfile_Type);
-    PyModule_AddObject(m, "file", (PyObject *) &rpmfile_Type);
+    if (!initAndAddType(m, &rpmfile_Type, &rpmfile_Type_Spec, "file")) {
+	return 0;
+    }
 
-    Py_INCREF(&rpmfiles_Type);
-    PyModule_AddObject(m, "files", (PyObject *) &rpmfiles_Type);
+    if (!initAndAddType(m, &rpmfiles_Type, &rpmfiles_Type_Spec, "files")) {
+	return 0;
+    }
 
-    Py_INCREF(&rpmKeyring_Type);
-    PyModule_AddObject(m, "keyring", (PyObject *) &rpmKeyring_Type);
+    if (!initAndAddType(m, &rpmKeyring_Type, &rpmKeyring_Type_Spec, "keyring")) {
+	return 0;
+    }
 
-    Py_INCREF(&rpmmi_Type);
-    PyModule_AddObject(m, "mi", (PyObject *) &rpmmi_Type);
+    if (!initAndAddType(m, &rpmmi_Type, &rpmmi_Type_Spec, "mi")) {
+	return 0;
+    }
 
-    Py_INCREF(&rpmii_Type);
-    PyModule_AddObject(m, "ii", (PyObject *) &rpmii_Type);
+    if (!initAndAddType(m, &rpmii_Type, &rpmii_Type_Spec, "ii")) {
+	return 0;
+    }
 
-    Py_INCREF(&rpmProblem_Type);
-    PyModule_AddObject(m, "prob", (PyObject *) &rpmProblem_Type);
+    if (!initAndAddType(m, &rpmProblem_Type, &rpmProblem_Type_Spec, "prob")) {
+	return 0;
+    }
 
-    Py_INCREF(&rpmPubkey_Type);
-    PyModule_AddObject(m, "pubkey", (PyObject *) &rpmPubkey_Type);
+    if (!initAndAddType(m, &rpmPubkey_Type, &rpmPubkey_Type_Spec, "pubkey")) {
+	return 0;
+    }
 
-    Py_INCREF(&rpmstrPool_Type);
-    PyModule_AddObject(m, "strpool", (PyObject *) &rpmstrPool_Type);
+    if (!initAndAddType(m, &rpmstrPool_Type, &rpmstrPool_Type_Spec, "strpool")) {
+	return 0;
+    }
 
-    Py_INCREF(&rpmte_Type);
-    PyModule_AddObject(m, "te", (PyObject *) &rpmte_Type);
+    if (!initAndAddType(m, &rpmte_Type, &rpmte_Type_Spec, "te")) {
+	return 0;
+    }
 
-    Py_INCREF(&rpmts_Type);
-    PyModule_AddObject(m, "ts", (PyObject *) &rpmts_Type);
+    if (!initAndAddType(m, &rpmts_Type, &rpmts_Type_Spec, "ts")) {
+	return 0;
+    }
 
-    Py_INCREF(&rpmver_Type);
-    PyModule_AddObject(m, "ver", (PyObject *) &rpmver_Type);
+    if (!initAndAddType(m, &rpmver_Type, &rpmver_Type_Spec, "ver")) {
+	return 0;
+    }
 
-    Py_INCREF(&spec_Type);
-    PyModule_AddObject(m, "spec", (PyObject *) &spec_Type);
-    Py_INCREF(&specPkg_Type);
-    PyModule_AddObject(m, "specPkg", (PyObject *) &specPkg_Type);
+    if (!initAndAddType(m, &spec_Type, &spec_Type_Spec, "spec")) {
+	return 0;
+    }
+    if (!initAndAddType(m, &specPkg_Type, &specPkg_Type_Spec, "specPkg")) {
+	return 0;
+    }
 
     addRpmTags(m);
 

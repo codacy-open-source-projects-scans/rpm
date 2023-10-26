@@ -50,6 +50,15 @@ static const rpmTagVal copyTagsDuringParse[] = {
 
 /**
  */
+static const rpmTagVal requiredTagsForBuild[] = {
+    RPMTAG_NAME,
+    RPMTAG_VERSION,
+    RPMTAG_RELEASE,
+    0
+};
+
+/**
+ */
 static const rpmTagVal requiredTags[] = {
     RPMTAG_NAME,
     RPMTAG_VERSION,
@@ -415,7 +424,7 @@ static inline char * findLastChar(char * s)
 
 /**
  */
-static int isMemberInEntry(Header h, const char *name, rpmTagVal tag)
+int isMemberInEntry(Header h, const char *name, rpmTagVal tag)
 {
     struct rpmtd_s td;
     int found = 0;
@@ -437,7 +446,7 @@ static int isMemberInEntry(Header h, const char *name, rpmTagVal tag)
 
 /**
  */
-static rpmRC checkForValidArchitectures(rpmSpec spec)
+rpmRC checkForValidArchitectures(rpmSpec spec)
 {
     char *arch = rpmExpand("%{_target_cpu}", NULL);
     char *os = rpmExpand("%{_target_os}", NULL);
@@ -483,7 +492,7 @@ exit:
  * @param NVR		package name-version-release
  * @return		RPMRC_OK if OK
  */
-static int checkForRequired(Header h, const char * NVR)
+int checkForRequired(Header h)
 {
     int res = RPMRC_OK;
     const rpmTagVal * p;
@@ -492,7 +501,30 @@ static int checkForRequired(Header h, const char * NVR)
 	if (!headerIsEntry(h, *p)) {
 	    rpmlog(RPMLOG_ERR,
 			_("%s field must be present in package: %s\n"),
-			rpmTagGetName(*p), NVR);
+			rpmTagGetName(*p), headerGetString(h, RPMTAG_NAME));
+	    res = RPMRC_FAIL;
+	}
+    }
+
+    return res;
+}
+
+/**
+ * Check that required tags are present in header.
+ * @param h		header
+ * @param NVR		package name-version-release
+ * @return		RPMRC_OK if OK
+ */
+static int checkForRequiredForBuild(Header h)
+{
+    int res = RPMRC_OK;
+    const rpmTagVal * p;
+
+    for (p = requiredTagsForBuild; *p != 0; p++) {
+	if (!headerIsEntry(h, *p)) {
+	    rpmlog(RPMLOG_ERR,
+			_("%s field must be present before build in package: %s\n"),
+			rpmTagGetName(*p), headerGetString(h, RPMTAG_NAME));
 	    res = RPMRC_FAIL;
 	}
     }
@@ -506,7 +538,7 @@ static int checkForRequired(Header h, const char * NVR)
  * @param NVR		package name-version-release
  * @return		RPMRC_OK if OK
  */
-static int checkForDuplicates(Header h, const char * NVR)
+int checkForDuplicates(Header h)
 {
     int res = RPMRC_OK;
     rpmTagVal tag, lastTag = RPMTAG_NOT_FOUND;
@@ -515,7 +547,7 @@ static int checkForDuplicates(Header h, const char * NVR)
     while ((tag = headerNextTag(hi)) != RPMTAG_NOT_FOUND) {
 	if (tag == lastTag) {
 	    rpmlog(RPMLOG_ERR, _("Duplicate %s entries in package: %s\n"),
-		     rpmTagGetName(tag), NVR);
+		     rpmTagGetName(tag), headerGetString(h, RPMTAG_NAME));
 	    res = RPMRC_FAIL;
 	}
 	lastTag = tag;
@@ -545,7 +577,7 @@ static struct optionalTag {
 
 /**
  */
-static void fillOutMainPackage(Header h)
+void fillOutMainPackage(Header h)
 {
     const struct optionalTag *ot;
 
@@ -1153,11 +1185,13 @@ int parsePreamble(rpmSpec spec, int initialPackage)
 	    NVR = xstrdup(name);
 	pkg = newPackage(NVR, spec->pool, &spec->packages);
 	headerPutString(pkg->header, RPMTAG_NAME, NVR);
+    } else if (spec->sourcePackage) {
+	NVR = xstrdup("(main package)");
+	pkg = spec->packages;
     } else {
 	NVR = xstrdup("(main package)");
 	pkg = newPackage(NULL, spec->pool, &spec->packages);
 	spec->sourcePackage = newPackage(NULL, spec->pool, NULL);
-	
     }
 
     if ((rc = readLine(spec, STRIP_TRAILINGSPACE | STRIP_COMMENTS)) > 0) {
@@ -1212,6 +1246,10 @@ int parsePreamble(rpmSpec spec, int initialPackage)
      * can't be messed with by anything spec does beyond this point.
      */
     if (initialPackage) {
+	if (checkForRequiredForBuild(pkg->header)) {
+	    goto exit;
+	}
+
 	char *buildRoot = rpmGetPath(spec->buildRoot, NULL);
 	free(spec->buildRoot);
 	spec->buildRoot = buildRoot;
@@ -1224,32 +1262,6 @@ int parsePreamble(rpmSpec spec, int initialPackage)
 	    rpmlog(RPMLOG_ERR, _("%%{buildroot} can not be \"/\"\n"));
 	    goto exit;
 	}
-    }
-
-    /* XXX Skip valid arch check if not building binary package */
-    if (!(spec->flags & RPMSPEC_ANYARCH) && checkForValidArchitectures(spec)) {
-	goto exit;
-    }
-
-    /* It is the main package */
-    if (pkg == spec->packages) {
-	fillOutMainPackage(pkg->header);
-	/* Define group tag to something when group is undefined in main package*/
-	if (!headerIsEntry(pkg->header, RPMTAG_GROUP)) {
-	    headerPutString(pkg->header, RPMTAG_GROUP, "Unspecified");
-	}
-    }
-
-    if (checkForDuplicates(pkg->header, NVR)) {
-	goto exit;
-    }
-
-    if (pkg != spec->packages) {
-	copyInheritedTags(pkg->header, spec->packages->header);
-    }
-
-    if (checkForRequired(pkg->header, NVR)) {
-	goto exit;
     }
 
     /* if we get down here nextPart has been set to non-error */

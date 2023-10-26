@@ -11,7 +11,8 @@ struct rpmPubkeyObject_s {
 static void rpmPubkey_dealloc(rpmPubkeyObject * s)
 {
     s->pubkey = rpmPubkeyFree(s->pubkey);
-    Py_TYPE(s)->tp_free((PyObject *)s);
+    freefunc free = PyType_GetSlot(Py_TYPE(s), Py_tp_free);
+    free(s);
 }
 
 static PyObject *rpmPubkey_new(PyTypeObject *subtype, 
@@ -56,47 +57,22 @@ static struct PyMethodDef rpmPubkey_methods[] = {
 
 static char rpmPubkey_doc[] = "";
 
-PyTypeObject rpmPubkey_Type = {
-	PyVarObject_HEAD_INIT(&PyType_Type, 0)
-	"rpm.pubkey",			/* tp_name */
-	sizeof(rpmPubkeyObject),	/* tp_size */
-	0,				/* tp_itemsize */
-	(destructor) rpmPubkey_dealloc,/* tp_dealloc */
-	0,				/* tp_print */
-	(getattrfunc)0, 		/* tp_getattr */
-	0,				/* tp_setattr */
-	0,				/* tp_compare */
-	0,				/* tp_repr */
-	0,				/* tp_as_number */
-	0,				/* tp_as_sequence */
-	0,				/* tp_as_mapping */
-	0,				/* tp_hash */
-	0,				/* tp_call */
-	0,				/* tp_str */
-	PyObject_GenericGetAttr,	/* tp_getattro */
-	PyObject_GenericSetAttr,	/* tp_setattro */
-	0,				/* tp_as_buffer */
-	Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,	/* tp_flags */
-	rpmPubkey_doc,			/* tp_doc */
-	0,				/* tp_traverse */
-	0,				/* tp_clear */
-	0,				/* tp_richcompare */
-	0,				/* tp_weaklistoffset */
-	0,				/* tp_iter */
-	0,				/* tp_iternext */
-	rpmPubkey_methods,		/* tp_methods */
-	0,				/* tp_members */
-	0,				/* tp_getset */
-	0,				/* tp_base */
-	0,				/* tp_dict */
-	0,				/* tp_descr_get */
-	0,				/* tp_descr_set */
-	0,				/* tp_dictoffset */
-	0,				/* tp_init */
-	0,				/* tp_alloc */
-	rpmPubkey_new,			/* tp_new */
-	0,				/* tp_free */
-	0,				/* tp_is_gc */
+static PyType_Slot rpmPubkey_Type_Slots[] = {
+    {Py_tp_dealloc, rpmPubkey_dealloc},
+    {Py_tp_getattro, PyObject_GenericGetAttr},
+    {Py_tp_setattro, PyObject_GenericSetAttr},
+    {Py_tp_doc, rpmPubkey_doc},
+    {Py_tp_methods, rpmPubkey_methods},
+    {Py_tp_new, rpmPubkey_new},
+    {0, NULL},
+};
+
+PyTypeObject* rpmPubkey_Type;
+PyType_Spec rpmPubkey_Type_Spec = {
+    .name = "rpm.pubkey",
+    .basicsize = sizeof(rpmPubkeyObject),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_IMMUTABLETYPE,
+    .slots = rpmPubkey_Type_Slots,
 };
 
 struct rpmKeyringObject_s {
@@ -108,7 +84,8 @@ struct rpmKeyringObject_s {
 static void rpmKeyring_dealloc(rpmKeyringObject * s)
 {
     rpmKeyringFree(s->keyring);
-    Py_TYPE(s)->tp_free((PyObject *)s);
+    freefunc free = PyType_GetSlot(Py_TYPE(s), Py_tp_free);
+    free(s);
 }
 
 static PyObject *rpmKeyring_new(PyTypeObject *subtype, 
@@ -122,7 +99,7 @@ static PyObject *rpmKeyring_addKey(rpmKeyringObject *s, PyObject *arg)
 {
     rpmPubkeyObject *pubkey = NULL;
 
-    if (!PyArg_Parse(arg, "O!", &rpmPubkey_Type, &pubkey))
+    if (!PyArg_Parse(arg, "O!", rpmPubkey_Type, &pubkey))
 	return NULL;
 
     return Py_BuildValue("i", rpmKeyringAddKey(s->keyring, pubkey->pubkey));
@@ -137,52 +114,28 @@ static struct PyMethodDef rpmKeyring_methods[] = {
 static char rpmKeyring_doc[] =
 "";
 
-PyTypeObject rpmKeyring_Type = {
-	PyVarObject_HEAD_INIT(&PyType_Type, 0)
-	"rpm.keyring",			/* tp_name */
-	sizeof(rpmKeyringObject),	/* tp_size */
-	0,				/* tp_itemsize */
-	(destructor) rpmKeyring_dealloc,/* tp_dealloc */
-	0,				/* tp_print */
-	0,		 		/* tp_getattr */
-	0,				/* tp_setattr */
-	0,				/* tp_compare */
-	0,				/* tp_repr */
-	0,				/* tp_as_number */
-	0,				/* tp_as_sequence */
-	0,				/* tp_as_mapping */
-	0,				/* tp_hash */
-	0,				/* tp_call */
-	0,				/* tp_str */
-	PyObject_GenericGetAttr,	/* tp_getattro */
-	PyObject_GenericSetAttr,	/* tp_setattro */
-	0,				/* tp_as_buffer */
-	Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,	/* tp_flags */
-	rpmKeyring_doc,			/* tp_doc */
-	0,				/* tp_traverse */
-	0,				/* tp_clear */
-	0,				/* tp_richcompare */
-	0,				/* tp_weaklistoffset */
-	0,				/* tp_iter */
-	0,				/* tp_iternext */
-	rpmKeyring_methods,		/* tp_methods */
-	0,				/* tp_members */
-	0,				/* tp_getset */
-	0,				/* tp_base */
-	0,				/* tp_dict */
-	0,				/* tp_descr_get */
-	0,				/* tp_descr_set */
-	0,				/* tp_dictoffset */
-	0,				/* tp_init */
-	0,				/* tp_alloc */
-	rpmKeyring_new,			/* tp_new */
-	0,				/* tp_free */
-	0,				/* tp_is_gc */
+static PyType_Slot rpmKeyring_Type_Slots[] = {
+    {Py_tp_dealloc, rpmKeyring_dealloc},
+    {Py_tp_getattro, PyObject_GenericGetAttr},
+    {Py_tp_setattro, PyObject_GenericSetAttr},
+    {Py_tp_doc, rpmKeyring_doc},
+    {Py_tp_methods, rpmKeyring_methods},
+    {Py_tp_new, rpmKeyring_new},
+    {0, NULL},
+};
+
+PyTypeObject* rpmKeyring_Type;
+PyType_Spec rpmKeyring_Type_Spec = {
+    .name = "rpm.keyring",
+    .basicsize = sizeof(rpmKeyringObject),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_IMMUTABLETYPE,
+    .slots = rpmKeyring_Type_Slots,
 };
 
 PyObject * rpmPubkey_Wrap(PyTypeObject *subtype, rpmPubkey pubkey)
 {
-    rpmPubkeyObject *s = (rpmPubkeyObject *)subtype->tp_alloc(subtype, 0);
+    allocfunc subtype_alloc = (allocfunc)PyType_GetSlot(subtype, Py_tp_alloc);
+    rpmPubkeyObject *s = (rpmPubkeyObject *)subtype_alloc(subtype, 0);
     if (s == NULL) return NULL;
 
     s->pubkey = pubkey;
@@ -191,7 +144,8 @@ PyObject * rpmPubkey_Wrap(PyTypeObject *subtype, rpmPubkey pubkey)
 
 PyObject * rpmKeyring_Wrap(PyTypeObject *subtype, rpmKeyring keyring)
 {
-    rpmKeyringObject *s = (rpmKeyringObject *)subtype->tp_alloc(subtype, 0);
+    allocfunc subtype_alloc = (allocfunc)PyType_GetSlot(subtype, Py_tp_alloc);
+    rpmKeyringObject *s = (rpmKeyringObject *)subtype_alloc(subtype, 0);
     if (s == NULL) return NULL;
 
     s->keyring = keyring;
@@ -201,7 +155,7 @@ PyObject * rpmKeyring_Wrap(PyTypeObject *subtype, rpmKeyring keyring)
 int rpmKeyringFromPyObject(PyObject *item, rpmKeyring *keyring)
 {
     rpmKeyringObject *kro;
-    if (!PyArg_Parse(item, "O!", &rpmKeyring_Type, &kro))
+    if (!PyArg_Parse(item, "O!", rpmKeyring_Type, &kro))
 	return 0;
     *keyring = kro->keyring;
     return 1;

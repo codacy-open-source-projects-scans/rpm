@@ -19,6 +19,9 @@ DESCRIPTION
 
 Run RPM internal Lua interpreter.
 
+Note: indexes start at 1 in Lua, so the program name is at arg[1] instead
+of the more customary index zero.
+
 **-i\|\--interactive**
 
 : Run an interactive session after executing optional script or statement.
@@ -54,11 +57,7 @@ Run an interactive session:
 SEE ALSO
 ========
 
-    lua(1)
-    popt(3),
-    getopt(3),
-    rpm(8),
-
+**lua**(1), **popt**(3), **getopt**(3), **rpm**(8)
 
 **http://www.rpm.org/ \<URL:http://www.rpm.org/\>**
 

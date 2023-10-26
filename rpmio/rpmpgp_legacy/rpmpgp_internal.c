@@ -13,11 +13,44 @@
 
 #include "rpmpgpval.h"
 #include "rpmpgp_internal.h"
-#include "rpmio_internal.h"	/* XXX rpmioSlurp */
 
 #include "debug.h"
 
 static int _print = 0;
+
+typedef uint8_t pgpTime_t[4];
+
+typedef struct pgpPktKeyV3_s {
+    uint8_t version;	/*!< version number (3). */
+    pgpTime_t time;	/*!< time that the key was created. */
+    uint8_t valid[2];	/*!< time in days that this key is valid. */
+    uint8_t pubkey_algo;	/*!< public key algorithm. */
+} * pgpPktKeyV3;
+
+typedef struct pgpPktKeyV4_s {
+    uint8_t version;	/*!< version number (4). */
+    pgpTime_t time;	/*!< time that the key was created. */
+    uint8_t pubkey_algo;	/*!< public key algorithm. */
+} * pgpPktKeyV4;
+
+typedef struct pgpPktSigV3_s {
+    uint8_t version;	/*!< version number (3). */
+    uint8_t hashlen;	/*!< length of following hashed material. MUST be 5. */
+    uint8_t sigtype;	/*!< signature type. */
+    pgpTime_t time;	/*!< 4 byte creation time. */
+    pgpKeyID_t signid;	/*!< key ID of signer. */
+    uint8_t pubkey_algo;	/*!< public key algorithm. */
+    uint8_t hash_algo;	/*!< hash algorithm. */
+    uint8_t signhash16[2];	/*!< left 16 bits of signed hash value. */
+} * pgpPktSigV3;
+
+typedef struct pgpPktSigV4_s {
+    uint8_t version;	/*!< version number (4). */
+    uint8_t sigtype;	/*!< signature type. */
+    uint8_t pubkey_algo;	/*!< public key algorithm. */
+    uint8_t hash_algo;	/*!< hash algorithm. */
+    uint8_t hashlen[2];	/*!< length of following hashed material. */
+} * pgpPktSigV4;
 
 /** \ingroup rpmio
  * Values parsed from OpenPGP signature/pubkey packet(s).
@@ -64,12 +97,12 @@ static void pgpPrtHex(const char *pre, const uint8_t *p, size_t plen)
     free(hex);
 }
 
-static void pgpPrtVal(const char * pre, pgpValTbl vs, uint8_t val)
+static void pgpPrtVal(const char * pre, pgpValType vt, uint8_t val)
 {
     if (!_print) return;
     if (pre && *pre)
 	fprintf(stderr, "%s", pre);
-    fprintf(stderr, "%s(%u)", pgpValStr(vs, val), (unsigned)val);
+    fprintf(stderr, "%s(%u)", pgpValString(vt, val), (unsigned)val);
 }
 
 static void pgpPrtTime(const char * pre, const uint8_t *p, size_t plen)
@@ -275,26 +308,26 @@ static int pgpPrtSubType(const uint8_t *h, size_t hlen, pgpSigType sigtype,
 	p += i;
 	hlen -= i;
 
-	pgpPrtVal("    ", pgpSubTypeTbl, (p[0]&(~PGPSUBTYPE_CRITICAL)));
+	pgpPrtVal("    ", PGPVAL_SUBTYPE, (p[0]&(~PGPSUBTYPE_CRITICAL)));
 	if (p[0] & PGPSUBTYPE_CRITICAL)
 	    if (_print)
 		fprintf(stderr, " *CRITICAL*");
 	switch (*p & ~PGPSUBTYPE_CRITICAL) {
 	case PGPSUBTYPE_PREFER_SYMKEY:	/* preferred symmetric algorithms */
 	    for (i = 1; i < plen; i++)
-		pgpPrtVal(" ", pgpSymkeyTbl, p[i]);
+		pgpPrtVal(" ", PGPVAL_SYMKEYALGO, p[i]);
 	    break;
 	case PGPSUBTYPE_PREFER_HASH:	/* preferred hash algorithms */
 	    for (i = 1; i < plen; i++)
-		pgpPrtVal(" ", pgpHashTbl, p[i]);
+		pgpPrtVal(" ", PGPVAL_HASHALGO, p[i]);
 	    break;
 	case PGPSUBTYPE_PREFER_COMPRESS:/* preferred compression algorithms */
 	    for (i = 1; i < plen; i++)
-		pgpPrtVal(" ", pgpCompressionTbl, p[i]);
+		pgpPrtVal(" ", PGPVAL_COMPRESSALGO, p[i]);
 	    break;
 	case PGPSUBTYPE_KEYSERVER_PREFERS:/* key server preferences */
 	    for (i = 1; i < plen; i++)
-		pgpPrtVal(" ", pgpKeyServerPrefsTbl, p[i]);
+		pgpPrtVal(" ", PGPVAL_SERVERPREFS, p[i]);
 	    break;
 	case PGPSUBTYPE_SIG_CREATE_TIME:  /* signature creation time */
 	    if (!hashed)
@@ -448,10 +481,10 @@ static int pgpPrtSig(pgpTag tag, const uint8_t *h, size_t hlen,
 	if (hlen <= sizeof(*v) || v->hashlen != 5)
 	    return 1;
 
-	pgpPrtVal("V3 ", pgpTagTbl, tag);
-	pgpPrtVal(" ", pgpPubkeyTbl, v->pubkey_algo);
-	pgpPrtVal(" ", pgpHashTbl, v->hash_algo);
-	pgpPrtVal(" ", pgpSigTypeTbl, v->sigtype);
+	pgpPrtVal("V3 ", PGPVAL_TAG, tag);
+	pgpPrtVal(" ", PGPVAL_PUBKEYALGO, v->pubkey_algo);
+	pgpPrtVal(" ", PGPVAL_HASHALGO, v->hash_algo);
+	pgpPrtVal(" ", PGPVAL_SIGTYPE, v->sigtype);
 	pgpPrtNL();
 	pgpPrtTime(" ", v->time, sizeof(v->time));
 	pgpPrtNL();
@@ -485,10 +518,10 @@ static int pgpPrtSig(pgpTag tag, const uint8_t *h, size_t hlen,
 	if (hlen <= sizeof(*v))
 	    return 1;
 
-	pgpPrtVal("V4 ", pgpTagTbl, tag);
-	pgpPrtVal(" ", pgpPubkeyTbl, v->pubkey_algo);
-	pgpPrtVal(" ", pgpHashTbl, v->hash_algo);
-	pgpPrtVal(" ", pgpSigTypeTbl, v->sigtype);
+	pgpPrtVal("V4 ", PGPVAL_TAG, tag);
+	pgpPrtVal(" ", PGPVAL_PUBKEYALGO, v->pubkey_algo);
+	pgpPrtVal(" ", PGPVAL_HASHALGO, v->hash_algo);
+	pgpPrtVal(" ", PGPVAL_SIGTYPE, v->sigtype);
 	pgpPrtNL();
 
 	p = &v->hashlen[0];
@@ -619,8 +652,8 @@ static int pgpPrtKey(pgpTag tag, const uint8_t *h, size_t hlen,
     {   pgpPktKeyV4 v = (pgpPktKeyV4)h;
 
 	if (hlen > sizeof(*v)) {
-	    pgpPrtVal("V4 ", pgpTagTbl, tag);
-	    pgpPrtVal(" ", pgpPubkeyTbl, v->pubkey_algo);
+	    pgpPrtVal("V4 ", PGPVAL_TAG, tag);
+	    pgpPrtVal(" ", PGPVAL_PUBKEYALGO, v->pubkey_algo);
 	    pgpPrtTime(" ", v->time, sizeof(v->time));
 	    pgpPrtNL();
 
@@ -645,7 +678,7 @@ static int pgpPrtKey(pgpTag tag, const uint8_t *h, size_t hlen,
 static int pgpPrtUserID(pgpTag tag, const uint8_t *h, size_t hlen,
 			pgpDigParams _digp)
 {
-    pgpPrtVal("", pgpTagTbl, tag);
+    pgpPrtVal("", PGPVAL_TAG, tag);
     if (_print)
 	fprintf(stderr, " \"%.*s\"", (int)hlen, (const char *)h);
     pgpPrtNL();
@@ -798,7 +831,7 @@ static int pgpPrtPkt(struct pgpPkt *p, pgpDigParams _digp)
     case PGPTAG_PRIVATE_62:
     case PGPTAG_CONTROL:
     default:
-	pgpPrtVal("", pgpTagTbl, p->tag);
+	pgpPrtVal("", PGPVAL_TAG, p->tag);
 	pgpPrtHex("", p->body, p->blen);
 	pgpPrtNL();
 	break;
@@ -1232,7 +1265,7 @@ static pgpArmor decodePkts(uint8_t *b, uint8_t **pkt, size_t *pktlen)
 	    if (rc != PGPARMOR_PUBKEY)	/* XXX ASCII Pubkeys only, please. */
 		continue;
 
-	    armortype = pgpValStr(pgpArmorTbl, rc);
+	    armortype = pgpValString(PGPVAL_ARMORBLOCK, rc);
 	    t += strlen(armortype);
 	    if (!TOKEQ(t, "-----"))
 		continue;
@@ -1367,7 +1400,7 @@ char * pgpArmorWrap(int atype, const unsigned char * s, size_t ns)
     char *buf = NULL, *val = NULL;
     char *enc = rpmBase64Encode(s, ns, -1);
     char *crc = rpmBase64CRC(s, ns);
-    const char *valstr = pgpValStr(pgpArmorTbl, atype);
+    const char *valstr = pgpValString(PGPVAL_ARMORBLOCK, atype);
 
     if (crc != NULL && enc != NULL) {
 	rasprintf(&buf, "%s=%s", enc, crc);

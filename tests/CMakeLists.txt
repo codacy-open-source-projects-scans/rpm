@@ -1,10 +1,11 @@
-# Use our top-level targets as an ordering clue to cmake: the project
-# needs to be built before we can populate anything...
-get_property(TOP_TARGETS DIRECTORY .. PROPERTY BUILDSYSTEM_TARGETS)
+# Use our cli tools as an ordering clue to cmake: the project
+# needs to be built before we can populate anything. The tools depend
+# on all the libraries so we get a good coverage.
+get_property(TOOLPROGS DIRECTORY ../tools PROPERTY BUILDSYSTEM_TARGETS)
 
 function(os_release var key)
 	execute_process(
-		COMMAND sh -c "grep ^${key} /etc/os-release | cut -d= -f2"
+		COMMAND sh -c ". /etc/os-release; echo $${key}"
 		OUTPUT_STRIP_TRAILING_WHITESPACE
 		OUTPUT_VARIABLE value
 	)
@@ -16,15 +17,12 @@ os_release(OS_NAME ID)
 os_release(OS_VERSION VERSION_ID)
 
 set(PYTHON ${Python3_EXECUTABLE})
-if (${WITH_INTERNAL_OPENPGP})
-	if (${WITH_OPENSSL})
-		set(CRYPTO openssl)
-	else()
-		set(CRYPTO libgcrypt)
-	endif()
+if (WITH_INTERNAL_OPENPGP)
+	set(PGP internal)
 else()
-	set(CRYPTO sequoia)
+	set(PGP sequoia)
 endif()
+set(HAVE_UNSHARE ${HAVE_UNSHARE})
 
 set(TESTSUITE_AT
 	rpmtests.at
@@ -53,9 +51,11 @@ set(TESTSUITE_AT
 	rpmorder.at
 	rpmvfylevel.at
 	rpmpgp.at
+	rpmdevel.at
 )
 
 find_program(AUTOM4TE autom4te REQUIRED)
+mark_as_advanced(AUTOM4TE)
 set(AUTOTEST ${AUTOM4TE} --language=autotest)
 
 set(TESTPROGS rpmpgpcheck rpmpgppubkeyfingerprint)
@@ -73,7 +73,9 @@ endif()
 
 # Detect suitable mktree backend
 find_program(BWRAP bwrap)
+mark_as_advanced(BWRAP)
 find_program(PODMAN NAMES podman docker)
+mark_as_advanced(PODMAN)
 if ("${MKTREE_BACKEND}" STREQUAL "")
 	if (BWRAP AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mktree.${OS_NAME})
 		set(MKTREE_BACKEND ${OS_NAME})
@@ -109,13 +111,13 @@ configure_file(mktree.${MKTREE_BACKEND} mktree @ONLY)
 configure_file(atlocal.in atlocal @ONLY)
 configure_file(package.m4.in package.m4 @ONLY)
 
-add_custom_target(env
-	COMMAND ./mktree env
+add_custom_target(atshell
+	COMMAND ./mktree atshell ||:
 	DEPENDS tree
 )
 
 add_custom_target(shell
-	COMMAND ./mktree shell
+	COMMAND ./mktree shell ||:
 	DEPENDS tree
 )
 
@@ -128,17 +130,16 @@ add_custom_target(reset
 	COMMAND ./mktree reset
 )
 
+add_custom_target(tree
+	COMMAND ./mktree build
+	DEPENDS rpmtests
+	DEPENDS ${TESTPROGS}
+	DEPENDS ${TOOLPROGS}
+)
+
 add_custom_command(OUTPUT rpmtests
 	COMMAND ${AUTOTEST} -I ${CMAKE_CURRENT_SOURCE_DIR}
 		-o rpmtests rpmtests.at
 	DEPENDS ${TESTSUITE_AT}
 	DEPENDS local.at
-)
-
-add_custom_target(tree
-	COMMAND ./mktree build
-	BYPRODUCTS mktree.output
-	DEPENDS rpmtests
-	DEPENDS ${TESTPROGS}
-	DEPENDS ${TOP_TARGETS}
 )

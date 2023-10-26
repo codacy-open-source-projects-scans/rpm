@@ -31,7 +31,7 @@
 
 static PyObject *makeHeader(Header h)
 {
-    return hdr_Wrap(&hdr_Type, headerLink(h));
+    return hdr_Wrap(hdr_Type, headerLink(h));
 }
 
 struct specPkgObject_s {
@@ -89,47 +89,30 @@ static PyGetSetDef specpkg_getseters[] = {
     { NULL }   /* sentinel */
 };
 
-PyTypeObject specPkg_Type = {
-	PyVarObject_HEAD_INIT(&PyType_Type, 0)
-	"rpm.specpkg",			/* tp_name */
-	sizeof(specPkgObject),		/* tp_size */
-	0,				/* tp_itemsize */
-	(destructor) specPkg_dealloc, 	/* tp_dealloc */
-	0,				/* tp_print */
-	0, 				/* tp_getattr */
-	0,				/* tp_setattr */
-	0,				/* tp_compare */
-	0,				/* tp_repr */
-	0,				/* tp_as_number */
-	0,				/* tp_as_sequence */
-	0,				/* tp_as_mapping */
-	0,				/* tp_hash */
-	0,				/* tp_call */
-	0,				/* tp_str */
-	PyObject_GenericGetAttr,	/* tp_getattro */
-	PyObject_GenericSetAttr,	/* tp_setattro */
-	0,				/* tp_as_buffer */
-	Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,	/* tp_flags */
-	specPkg_doc,			/* tp_doc */
-	0,				/* tp_traverse */
-	0,				/* tp_clear */
-	0,				/* tp_richcompare */
-	0,				/* tp_weaklistoffset */
-	0,				/* tp_iter */
-	0,				/* tp_iternext */
-	0,				/* tp_methods */
-	0,				/* tp_members */
-	specpkg_getseters,		/* tp_getset */
-	0,				/* tp_base */
-	0,				/* tp_dict */
-	0,				/* tp_descr_get */
-	0,				/* tp_descr_set */
-	0,				/* tp_dictoffset */
-	0,				/* tp_init */
-	0,				/* tp_alloc */
-	0,				/* tp_new */
-	0,				/* tp_free */
-	0,				/* tp_is_gc */
+static PyObject *disabled_new(PyTypeObject *type,
+                              PyObject *args, PyObject *kwds)
+{
+    PyErr_SetString(PyExc_TypeError,
+                    "TypeError: cannot create 'rpm.specpkg' instances");
+    return NULL;
+}
+
+static PyType_Slot specPkg_Type_Slots[] = {
+    {Py_tp_new, disabled_new},
+    {Py_tp_dealloc, specPkg_dealloc},
+    {Py_tp_getattro, PyObject_GenericGetAttr},
+    {Py_tp_setattro, PyObject_GenericSetAttr},
+    {Py_tp_doc, specPkg_doc},
+    {Py_tp_getset, specpkg_getseters},
+    {0, NULL},
+};
+
+PyTypeObject* specPkg_Type;
+PyType_Spec specPkg_Type_Spec = {
+    .name = "rpm.specpkg",
+    .basicsize = sizeof(specPkgObject),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_IMMUTABLETYPE,
+    .slots = specPkg_Type_Slots,
 };
 
 struct specObject_s {
@@ -144,7 +127,8 @@ spec_dealloc(specObject * s)
     if (s->spec) {
 	s->spec=rpmSpecFree(s->spec);
     }
-    Py_TYPE(s)->tp_free((PyObject *)s);
+    freefunc free = PyType_GetSlot(Py_TYPE(s), Py_tp_free);
+    free(s);
 }
 
 static PyObject * getSection(rpmSpec spec, int section)
@@ -232,7 +216,7 @@ static PyObject * spec_get_packages(specObject *s, void *closure)
     iter = rpmSpecPkgIterInit(s->spec);
 
     while ((pkg = rpmSpecPkgIterNext(iter)) != NULL) {
-	PyObject *po = specPkg_Wrap(&specPkg_Type, pkg, s);
+	PyObject *po = specPkg_Wrap(specPkg_Type, pkg, s);
         if (!po) {
             rpmSpecPkgIterFree(iter);
             Py_DECREF(pkgList);
@@ -290,53 +274,28 @@ static struct PyMethodDef spec_methods[] = {
     { NULL, NULL }
 };
 
-PyTypeObject spec_Type = {
-    PyVarObject_HEAD_INIT(&PyType_Type, 0)
-    "rpm.spec",               /*tp_name*/
-    sizeof(specObject),        /*tp_basicsize*/
-    0,                         /*tp_itemsize*/
-    (destructor) spec_dealloc, /*tp_dealloc*/
-    0,                         /*tp_print*/
-    0,                         /*tp_getattr*/
-    0,                         /*tp_setattr*/
-    0,                         /*tp_compare*/
-    0,                         /*tp_repr*/
-    0,                         /*tp_as_number*/
-    0,                         /*tp_as_sequence*/
-    0,                         /*tp_as_mapping*/
-    0,                         /*tp_hash */
-    0,                         /*tp_call*/
-    0,                         /*tp_str*/
-    0,                         /*tp_getattro*/
-    0,                         /*tp_setattro*/
-    0,                         /*tp_as_buffer*/
-    Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE, /*tp_flags*/
-    spec_doc,                  /* tp_doc */
-    0,                         /* tp_traverse */
-    0,                         /* tp_clear */
-    0,                         /* tp_richcompare */
-    0,                         /* tp_weaklistoffset */
-    0,                         /* tp_iter */
-    0,                         /* tp_iternext */
-    spec_methods,	       /* tp_methods */
-    0,                         /* tp_members */
-    spec_getseters,            /* tp_getset */
-    0,                         /* tp_base */
-    0,                         /* tp_dict */
-    0,                         /* tp_descr_get */
-    0,                         /* tp_descr_set */
-    0,                         /* tp_dictoffset */
-    0,                         /* tp_init */
-    0,                         /* tp_alloc */
-    spec_new,                  /* tp_new */
-    0,                         /* tp_free */
-    0,                         /* tp_is_gc */
+static PyType_Slot spec_Type_Slots[] = {
+    {Py_tp_dealloc, spec_dealloc},
+    {Py_tp_doc, spec_doc},
+    {Py_tp_methods, spec_methods},
+    {Py_tp_getset, spec_getseters},
+    {Py_tp_new, spec_new},
+    {0, NULL},
+};
+
+PyTypeObject* spec_Type;
+PyType_Spec spec_Type_Spec = {
+    .name = "rpm.spec",
+    .basicsize = sizeof(specObject),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_IMMUTABLETYPE,
+    .slots = spec_Type_Slots,
 };
 
 PyObject *
 spec_Wrap(PyTypeObject *subtype, rpmSpec spec) 
 {
-    specObject * s = (specObject *)subtype->tp_alloc(subtype, 0);
+    allocfunc subtype_alloc = (allocfunc)PyType_GetSlot(subtype, Py_tp_alloc);
+    specObject *s = (specObject *)subtype_alloc(subtype, 0);
     if (s == NULL) return NULL;
 
     s->spec = spec; 
@@ -345,7 +304,8 @@ spec_Wrap(PyTypeObject *subtype, rpmSpec spec)
 
 PyObject * specPkg_Wrap(PyTypeObject *subtype, rpmSpecPkg pkg, specObject *source)
 {
-    specPkgObject * s = (specPkgObject *)subtype->tp_alloc(subtype, 0);
+    allocfunc subtype_alloc = (allocfunc)PyType_GetSlot(subtype, Py_tp_alloc);
+    specPkgObject *s = (specPkgObject *)subtype_alloc(subtype, 0);
     if (s == NULL) return NULL;
 
     s->pkg = pkg;

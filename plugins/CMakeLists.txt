@@ -38,11 +38,17 @@ if(WITH_FSVERITY)
 	target_include_directories(fsverity PRIVATE ${CMAKE_SOURCE_DIR}/sign)
 endif()
 
-set(plugindir ${CMAKE_INSTALL_FULL_LIBDIR}/rpm-plugins)
+if (HAVE_UNSHARE)
+	add_library(unshare MODULE unshare.c)
+endif()
+
+set(RPM_PLUGINDIR ${CMAKE_INSTALL_FULL_LIBDIR}/rpm-plugins
+	CACHE PATH "rpm plugin directory")
 
 get_property(plugins DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 foreach(plugin ${plugins})
 	target_link_libraries(${plugin} PRIVATE librpmio librpm)
-	install(TARGETS ${plugin} DESTINATION ${plugindir})
+	install(TARGETS ${plugin} DESTINATION ${RPM_PLUGINDIR})
+	install(FILES macros.transaction_${plugin} DESTINATION ${RPM_MACROSDIR})
 endforeach()
 

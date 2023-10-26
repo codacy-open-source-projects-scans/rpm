@@ -65,13 +65,35 @@ rpmii_instances(rpmiiObject * s)
     int entries = rpmdbIndexIteratorNumPkgs(s->ii);
     PyObject * list = PyList_New(entries);
     PyObject * tuple;
+    PyObject * item;
+    int res;
     for (int i = 0; i < entries; i++) {
         tuple = PyTuple_New(2);
-        PyTuple_SET_ITEM(tuple, 0,
-                         PyLong_FromLong(rpmdbIndexIteratorPkgOffset(s->ii, i)));
-        PyTuple_SET_ITEM(tuple, 1,
-                         PyLong_FromLong(rpmdbIndexIteratorTagNum(s->ii, i)));
-	PyList_SET_ITEM(list, i, tuple);
+        item = PyLong_FromLong(rpmdbIndexIteratorPkgOffset(s->ii, i));
+        if (!item) {
+            Py_DECREF(list);
+            Py_DECREF(tuple);
+            return NULL;
+        }
+        res = PyTuple_SetItem(tuple, 0, item);
+        if (res < 0) {
+            Py_DECREF(list);
+            Py_DECREF(tuple);
+            return NULL;
+        }
+        item = PyLong_FromLong(rpmdbIndexIteratorTagNum(s->ii, i));
+        if (!item) {
+            Py_DECREF(list);
+            Py_DECREF(tuple);
+            return NULL;
+        }
+        PyTuple_SetItem(tuple, 1, item);
+        if (res < 0) {
+            Py_DECREF(list);
+            Py_DECREF(tuple);
+            return NULL;
+        }
+	PyList_SetItem(list, i, tuple);
     }
     return list;
 }
@@ -86,7 +108,8 @@ static void rpmii_dealloc(rpmiiObject * s)
     s->ii = rpmdbIndexIteratorFree(s->ii);
     rpmtdFree(s->keytd);
     Py_DECREF(s->ref);
-    Py_TYPE(s)->tp_free((PyObject *)s);
+    freefunc free = PyType_GetSlot(Py_TYPE(s), Py_tp_free);
+    free(s);
 }
 
 static int rpmii_bool(rpmiiObject *s)
@@ -94,68 +117,43 @@ static int rpmii_bool(rpmiiObject *s)
     return (s->ii != NULL);
 }
 
-static PyNumberMethods rpmii_as_number = {
-	0, /* nb_add */
-	0, /* nb_subtract */
-	0, /* nb_multiply */
-	0, /* nb_remainder */
-	0, /* nb_divmod */
-	0, /* nb_power */
-	0, /* nb_negative */
-	0, /* nb_positive */
-	0, /* nb_absolute */
-	(inquiry)rpmii_bool, /* nb_bool/nonzero */
-};
 
 static char rpmii_doc[] =
 "";
 
-PyTypeObject rpmii_Type = {
-	PyVarObject_HEAD_INIT(&PyType_Type, 0)
-	"rpm.ii",			/* tp_name */
-	sizeof(rpmiiObject),		/* tp_size */
-	0,				/* tp_itemsize */
-	(destructor) rpmii_dealloc, 	/* tp_dealloc */
-	0,				/* tp_print */
-	(getattrfunc)0, 		/* tp_getattr */
-	0,				/* tp_setattr */
-	0,				/* tp_compare */
-	0,				/* tp_repr */
-	&rpmii_as_number,		/* tp_as_number */
-	0,				/* tp_as_sequence */
-	0,				/* tp_as_mapping */
-	0,				/* tp_hash */
-	0,				/* tp_call */
-	0,				/* tp_str */
-	PyObject_GenericGetAttr,	/* tp_getattro */
-	PyObject_GenericSetAttr,	/* tp_setattro */
-	0,				/* tp_as_buffer */
-	Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,	/* tp_flags */
-	rpmii_doc,			/* tp_doc */
-	0,				/* tp_traverse */
-	0,				/* tp_clear */
-	0,				/* tp_richcompare */
-	0,				/* tp_weaklistoffset */
-	PyObject_SelfIter,		/* tp_iter */
-	(iternextfunc) rpmii_iternext,	/* tp_iternext */
-	rpmii_methods,			/* tp_methods */
-	0,				/* tp_members */
-	0,				/* tp_getset */
-	0,				/* tp_base */
-	0,				/* tp_dict */
-	0,				/* tp_descr_get */
-	0,				/* tp_descr_set */
-	0,				/* tp_dictoffset */
-	0,				/* tp_init */
-	0,				/* tp_alloc */
-	0,				/* tp_new */
-	0,				/* tp_free */
-	0,				/* tp_is_gc */
+static PyObject *disabled_new(PyTypeObject *type,
+                              PyObject *args, PyObject *kwds)
+{
+    PyErr_SetString(PyExc_TypeError,
+                    "TypeError: cannot create 'rpm.ii' instances");
+    return NULL;
+}
+
+static PyType_Slot rpmii_Type_Slots[] = {
+    {Py_tp_new, disabled_new},
+    {Py_tp_dealloc, rpmii_dealloc},
+    {Py_nb_bool, rpmii_bool},
+    {Py_tp_getattro, PyObject_GenericGetAttr},
+    {Py_tp_setattro, PyObject_GenericSetAttr},
+    {Py_tp_doc, rpmii_doc},
+    {Py_tp_iter, PyObject_SelfIter},
+    {Py_tp_iternext, rpmii_iternext},
+    {Py_tp_methods, rpmii_methods},
+    {0, NULL},
+};
+
+PyTypeObject* rpmii_Type;
+PyType_Spec rpmii_Type_Spec = {
+    .name = "rpm.ii",
+    .basicsize = sizeof(rpmiiObject),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_IMMUTABLETYPE,
+    .slots = rpmii_Type_Slots,
 };
 
 PyObject * rpmii_Wrap(PyTypeObject *subtype, rpmdbIndexIterator ii, PyObject *s)
 {
-    rpmiiObject * iio = (rpmiiObject *)subtype->tp_alloc(subtype, 0);
+    allocfunc subtype_alloc = (allocfunc)PyType_GetSlot(subtype, Py_tp_alloc);
+    rpmiiObject *iio = (rpmiiObject *)subtype_alloc(subtype, 0);
     if (iio == NULL) return NULL;
 
     iio->ii = ii;

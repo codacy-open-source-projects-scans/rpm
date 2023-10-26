@@ -15,7 +15,7 @@
 
 #include "debug.h"
 
-const char * pgpValStr(pgpValTbl vs, uint8_t val)
+static const char * pgpValStr(pgpValTbl vs, uint8_t val)
 {
     do {
 	if (vs->val == val)
@@ -56,11 +56,11 @@ char *pgpIdentItem(pgpDigParams digp)
         char *signid = rpmhex(pgpDigParamsSignID(digp) + 4, PGP_KEYID_LEN - 4);
 	rasprintf(&id, _("V%d %s/%s %s, key ID %s"),
                   pgpDigParamsVersion(digp),
-                  pgpValStr(pgpPubkeyTbl, pgpDigParamsAlgo(digp, PGPVAL_PUBKEYALGO)),
-                  pgpValStr(pgpHashTbl, pgpDigParamsAlgo(digp, PGPVAL_HASHALGO)),
-                  pgpValStr(pgpTagTbl,
-                            pgpSignatureType(digp) == -1
-                            ? PGPTAG_PUBLIC_KEY : PGPTAG_SIGNATURE),
+                  pgpValString(PGPVAL_PUBKEYALGO,
+				pgpDigParamsAlgo(digp, PGPVAL_PUBKEYALGO)),
+                  pgpValString(PGPVAL_HASHALGO,
+				pgpDigParamsAlgo(digp, PGPVAL_HASHALGO)),
+                  (pgpSignatureType(digp) == -1) ? "Public Key" : "Signature",
                   signid);
         free(signid);
     } else {

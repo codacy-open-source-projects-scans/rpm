@@ -19,9 +19,6 @@ option(ENABLE_NDB "Enable ndb rpmdb support" ON)
 option(ENABLE_BDB_RO "Enable read-only Berkeley DB rpmdb support (EXPERIMENTAL)" OFF)
 option(ENABLE_TESTSUITE "Enable test-suite" ON)
 
-option(WITH_INTERNAL_OPENPGP "Use internal OpenPGP parse (DEPRECATED)" OFF)
-option(WITH_OPENSSL "Use openssl (instead of libgcrypt) for internal crypto" OFF)
-
 option(WITH_CAP "Build with capability support" ON)
 option(WITH_ACL "Build with ACL support" ON)
 option(WITH_ARCHIVE "Build with libarchive support" ON)
@@ -33,6 +30,7 @@ option(WITH_IMAEVM "Build with IMA support" OFF)
 option(WITH_FAPOLICYD "Build with fapolicyd support" ON)
 
 set(RPM_CONFIGDIR "${CMAKE_INSTALL_PREFIX}/lib/rpm" CACHE PATH "rpm home")
+set(RPM_MACROSDIR "${RPM_CONFIGDIR}/macros.d")
 set(RPM_VENDOR "vendor" CACHE STRING "rpm vendor string")
 
 # Emulate libtool versioning. Before a public release:
@@ -68,6 +66,7 @@ function(findutil UTIL TRY)
 		message(DEBUG "${util} not found, assuming /usr/bin/${util}")
 		set(${UTIL} /usr/bin/${util} PARENT_SCOPE)
 	endif()
+	mark_as_advanced(${UTIL})
 endfunction()
 
 function(makemacros)
@@ -163,7 +162,8 @@ function(makemacros)
 		${CMAKE_COMMAND} -E env pkglibdir=${RPM_CONFIGDIR}
 			${CMAKE_SOURCE_DIR}/installplatform
 			rpmrc platform macros
-			${RPMCANONVENDOR} ${RPMCANONOS} ${RPMCANONGNU})"
+			${RPMCANONVENDOR} ${RPMCANONOS} ${RPMCANONGNU}
+		WORKING_DIRECTORY ${CMAKE_BINARY_DIR})"
 	)
 endfunction()
 
@@ -207,6 +207,8 @@ set_target_properties(LUA::LUA PROPERTIES
 add_library(MAGIC::MAGIC UNKNOWN IMPORTED)
 find_library(MAGIC_LIBRARY NAMES magic REQUIRED)
 find_path(MAGIC_INCLUDE_DIR NAMES magic.h REQUIRED)
+mark_as_advanced(MAGIC_LIBRARY)
+mark_as_advanced(MAGIC_INCLUDE_DIR)
 set_target_properties(MAGIC::MAGIC PROPERTIES
 		      IMPORTED_LOCATION "${MAGIC_LIBRARY}")
 target_include_directories(MAGIC::MAGIC INTERFACE "${MAGIC_INCLUDE_DIR}")
@@ -234,7 +236,7 @@ endif()
 list(APPEND db_backends dummy)
 
 if (ENABLE_PYTHON)
-	find_package(Python3 3.2 COMPONENTS Interpreter Development REQUIRED)
+	find_package(Python3 3.7 COMPONENTS Interpreter Development REQUIRED)
 endif()
 
 if (WITH_CAP)
@@ -266,12 +268,15 @@ if (WITH_IMAEVM)
 	add_library(IMA::IMA UNKNOWN IMPORTED)
 	find_path(IMA_INCLUDE_DIR NAMES imaevm.h REQUIRED)
 	find_library(IMA_LIBRARY NAMES imaevm REQUIRED)
+	mark_as_advanced(IMA_INCLUDE_DIR)
+	mark_as_advanced(IMA_LIBRARY)
 	set_target_properties(IMA::IMA PROPERTIES
 			      IMPORTED_LOCATION "${IMA_LIBRARY}")
 	target_include_directories(IMA::IMA INTERFACE "${IMA_INCLUDE_DIR}")
 endif()
 
 find_program(__FIND_DEBUGINFO find-debuginfo)
+mark_as_advanced(__FIND_DEBUGINFO)
 
 function(chkdef func req)
 	string(TOUPPER ${func} FUNC)

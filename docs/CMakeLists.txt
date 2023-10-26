@@ -1,4 +1,5 @@
 find_program(PANDOC NAMES pandoc)
+mark_as_advanced(PANDOC)
 
 add_subdirectory(man)
 
@@ -15,6 +16,7 @@ endif()
 install(DIRECTORY ${doxsrc}/html/ DESTINATION ${CMAKE_INSTALL_DOCDIR}/API)
 
 install(FILES
+	README.md
 	manual/arch_dependencies.md
 	manual/autosetup.md
 	manual/boolean_dependencies.md

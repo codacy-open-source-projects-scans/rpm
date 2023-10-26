@@ -4,7 +4,6 @@
 
 #include <rpm/rpmlib.h>	/* rpmReadPackageFile, headerCheck */
 #include <rpm/rpmtag.h>
-#include <rpm/rpmpgp.h>
 #include <rpm/rpmdb.h>
 #include <rpm/rpmbuild.h>
 
@@ -420,7 +419,7 @@ rpmts_HdrFromFdno(rpmtsObject * s, PyObject *arg)
     Py_XDECREF(fdo);
 
     if (rpmrc == RPMRC_OK) {
-	ho = hdr_Wrap(&hdr_Type, h);
+	ho = hdr_Wrap(hdr_Type, h);
     } else {
 	Py_INCREF(Py_None);
 	ho = Py_None;
@@ -494,7 +493,7 @@ static PyObject *rpmts_getKeyring(rpmtsObject *s, PyObject *args, PyObject *kwds
 
     keyring = rpmtsGetKeyring(s->ts, autoload);
     if (keyring) {
-	return rpmKeyring_Wrap(&rpmKeyring_Type, keyring);
+	return rpmKeyring_Wrap(rpmKeyring_Type, keyring);
     } else {
 	Py_RETURN_NONE;
     }
@@ -534,7 +533,7 @@ rpmtsCallback(const void * arg, const rpmCallbackType what,
     } else {
 	PyObject *o;
 	if (arg) {
-	    o = rpmte_Wrap(&rpmte_Type, (rpmte) arg);
+	    o = rpmte_Wrap(rpmte_Type, (rpmte) arg);
 	} else {
 	    o = Py_None;
 	    Py_INCREF(o);
@@ -632,7 +631,7 @@ rpmts_iternext(rpmtsObject * s)
 
     te = rpmtsiNext(s->tsi, 0);
     if (te != NULL) {
-	result = rpmte_Wrap(&rpmte_Type, te);
+	result = rpmte_Wrap(rpmte_Type, te);
     } else {
 	s->tsi = rpmtsiFree(s->tsi);
     }
@@ -683,7 +682,7 @@ rpmts_Match(rpmtsObject * s, PyObject * args, PyObject * kwds)
 	}
     }
 
-    mio = rpmmi_Wrap(&rpmmi_Type, rpmtsInitIterator(s->ts, tag, key, len), (PyObject*)s);
+    mio = rpmmi_Wrap(rpmmi_Type, rpmtsInitIterator(s->ts, tag, key, len), (PyObject*)s);
 
 exit:
     Py_XDECREF(str);
@@ -714,7 +713,7 @@ rpmts_index(rpmtsObject * s, PyObject * args, PyObject * kwds)
         PyErr_SetString(PyExc_KeyError, "No index for this tag");
         return NULL;
     }
-    mio = rpmii_Wrap(&rpmii_Type, ii, (PyObject*)s);
+    mio = rpmii_Wrap(rpmii_Type, ii, (PyObject*)s);
 
 exit:
     return mio;
@@ -838,12 +837,14 @@ static void rpmts_dealloc(rpmtsObject * s)
     s->ts = rpmtsFree(s->ts);
     Py_XDECREF(s->scriptFd);
     Py_XDECREF(s->keyList);
-    Py_TYPE(s)->tp_free((PyObject *)s);
+    freefunc free = PyType_GetSlot(Py_TYPE(s), Py_tp_free);
+    free(s);
 }
 
 static PyObject * rpmts_new(PyTypeObject * subtype, PyObject *args, PyObject *kwds)
 {
-    rpmtsObject * s = (rpmtsObject *)subtype->tp_alloc(subtype, 0);
+    allocfunc subtype_alloc = (allocfunc)PyType_GetSlot(subtype, Py_tp_alloc);
+    rpmtsObject *s = (rpmtsObject *)subtype_alloc(subtype, 0);
     if (s == NULL) return NULL;
 
     s->ts = rpmtsCreate();
@@ -1045,45 +1046,24 @@ static PyGetSetDef rpmts_getseters[] = {
 	{ NULL }
 };
 
-PyTypeObject rpmts_Type = {
-	PyVarObject_HEAD_INIT(&PyType_Type, 0)
-	"rpm.ts",			/* tp_name */
-	sizeof(rpmtsObject),		/* tp_size */
-	0,				/* tp_itemsize */
-	(destructor) rpmts_dealloc, 	/* tp_dealloc */
-	0,				/* tp_print */
-	(getattrfunc)0, 		/* tp_getattr */
-	(setattrfunc)0,			/* tp_setattr */
-	0,				/* tp_compare */
-	0,				/* tp_repr */
-	0,				/* tp_as_number */
-	0,				/* tp_as_sequence */
-	0,				/* tp_as_mapping */
-	0,				/* tp_hash */
-	0,				/* tp_call */
-	0,				/* tp_str */
-	PyObject_GenericGetAttr, 	/* tp_getattro */
-	PyObject_GenericSetAttr,	/* tp_setattro */
-	0,				/* tp_as_buffer */
-	Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,	/* tp_flags */
-	rpmts_doc,			/* tp_doc */
-	0,				/* tp_traverse */
-	0,				/* tp_clear */
-	0,				/* tp_richcompare */
-	0,				/* tp_weaklistoffset */
-	PyObject_SelfIter,		/* tp_iter */
-	(iternextfunc) rpmts_iternext,	/* tp_iternext */
-	rpmts_methods,			/* tp_methods */
-	0,				/* tp_members */
-	rpmts_getseters,		/* tp_getset */
-	0,				/* tp_base */
-	0,				/* tp_dict */
-	0,				/* tp_descr_get */
-	0,				/* tp_descr_set */
-	0,				/* tp_dictoffset */
-	(initproc) rpmts_init,		/* tp_init */
-	0,				/* tp_alloc */
-	(newfunc) rpmts_new,		/* tp_new */
-	0,				/* tp_free */
-	0,				/* tp_is_gc */
+static PyType_Slot rpmts_Type_Slots[] = {
+    {Py_tp_dealloc, rpmts_dealloc},
+    {Py_tp_getattro, PyObject_GenericGetAttr},
+    {Py_tp_setattro, PyObject_GenericSetAttr},
+    {Py_tp_doc, rpmts_doc},
+    {Py_tp_iter, PyObject_SelfIter},
+    {Py_tp_iternext, rpmts_iternext},
+    {Py_tp_methods, rpmts_methods},
+    {Py_tp_getset, rpmts_getseters},
+    {Py_tp_init, rpmts_init},
+    {Py_tp_new, rpmts_new},
+    {0, NULL},
+};
+
+PyTypeObject* rpmts_Type;
+PyType_Spec rpmts_Type_Spec = {
+    .name = "rpm.ts",
+    .basicsize = sizeof(rpmtsObject),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_IMMUTABLETYPE,
+    .slots = rpmts_Type_Slots,
 };

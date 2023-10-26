@@ -32,7 +32,6 @@ case $CMD in
         fi
         $PODMAN run --privileged -it --name $NAME --hostname sandbox \
                     -e ROOTLESS=$ROOTLESS -v $PWD:/srv:z $IMAGE "$@"
-        exit 0
     ;;
     check)
         # Pass select options to $PODMAN
@@ -43,7 +42,7 @@ case $CMD in
         esac
         $PODMAN run --privileged -it --rm --read-only --tmpfs /tmp \
                     -v /srv --workdir /srv -e ROOTLESS=$ROOTLESS \
-                    $OPTS $IMAGE mktree check "$@"
+                    --env RPMTREE=/ $OPTS $IMAGE rpmtests --log "$@"
     ;;
     reset)
         $PODMAN stop $NAME >/dev/null &&
