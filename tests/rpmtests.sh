@@ -1,25 +1,41 @@
 #!/bin/bash
 #
-# Wrapper for rpmtests that looks for atlocal in the script's directory instead
-# of $PWD or the one specified with -C.  In addition, implements the -L | --log
-# option to print the test log when done.
+# Wrapper around rpmtests that adds a couple of useful options/overrides:
+#   -C, --directory DIR
+#       like original -C but loads atlocal from script's directory if missing
+#   -L, --log
+#       print the test log when done
+#   -S, --shell [CMD]
+#       create an empty test and run a shell (or CMD) in it
+#   -R, --reset
+#       delete the test created with --shell
 
 SCRIPT_DIR=$(dirname $(readlink -f $0))
-SCRIPT_FILES="rpmtests atlocal mktree.common"
-
-TARGET_DIR=$PWD
+SHELL_DIR=$PWD/rpmtests.dir/shell
 PRINT_LOG=0
+RUN_SHELL=0
+RC=0
 
-cd "$SCRIPT_DIR"
+fixperms()
+{
+    chmod -Rf u+rwX "$@"
+}
 
 while [ $# != 0 ]; do
     case $1 in
         -C | --directory )
-            TARGET_DIR="$2"
+            cd "$2"
             shift
         ;;
         -L | --log )
             PRINT_LOG=1
+        ;;
+        -S | --shell )
+            RUN_SHELL=1
+        ;;
+        -R | --reset )
+            rm -rf "$SHELL_DIR"
+            exit
         ;;
         *)
             break
@@ -28,20 +44,29 @@ while [ $# != 0 ]; do
     shift
 done
 
-# Symlink script files into $TARGET_DIR, prefer local versions though
-for file in $SCRIPT_FILES; do
-    [ -f "$TARGET_DIR/$file" ] || ln -s $PWD/$file $TARGET_DIR/
-done
+[ -f atlocal ] || ln -s $SCRIPT_DIR/atlocal .
 
-cd "$TARGET_DIR"
+# Run the test suite (or a shell)
+if [ $RUN_SHELL == 0 ]; then
+    $SCRIPT_DIR/rpmtests "$@"; RC=$?
+    [ $PRINT_LOG == 1 ] && cat rpmtests.log
+    fixperms rpmtests.dir/*/{diff,work}
+else
+    # Emulate a single, writable test
+    set -a
+    source ./atlocal
+    trap : INT
+    RPMTEST=$SHELL_DIR/tree
+    snapshot mount $SHELL_DIR
+    if [ $# == 0 ]; then
+        $SHELL
+    else
+        "$@"
+    fi
+    snapshot umount
+    fixperms $SHELL_DIR
+fi
 
-# Run the test suite
-./rpmtests "$@"; RC=$?
-[ $PRINT_LOG == 1 ] && cat rpmtests.log
-
-# Clean up the symlinks
-for file in $SCRIPT_FILES; do
-    [ -L "$file" ] && rm "$file"
-done
+[ -L atlocal ] && rm atlocal
 
 exit $RC

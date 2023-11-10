@@ -129,6 +129,17 @@ int handleComments(char *s)
     return 0;
 }
 
+static void ofilineMacro(rpmMacroBuf mb,
+			rpmMacroEntry me, ARGV_t margs, size_t *parsed)
+{
+    OFI_t *ofi = rpmMacroEntryPriv(me);
+    if (ofi) {
+	char lnobuf[16];
+	snprintf(lnobuf, sizeof(lnobuf), "%d", ofi->lineNum);
+	rpmMacroBufAppendStr(mb, lnobuf);
+    }
+}
+
 /* Push a file to spec's file stack, return the newly pushed entry */
 static OFI_t * pushOFI(rpmSpec spec, const char *fn)
 {
@@ -144,6 +155,7 @@ static OFI_t * pushOFI(rpmSpec spec, const char *fn)
     ofi->next = spec->fileStack;
 
     rpmPushMacroFlags(spec->macros, "__file_name", NULL, fn, RMIL_SPEC, RPMMACRO_LITERAL);
+    rpmPushMacroAux(spec->macros, "__file_lineno", NULL, ofilineMacro, ofi, -1, 0, 0);
 
     spec->fileStack = ofi;
     return spec->fileStack;
@@ -162,6 +174,7 @@ static OFI_t * popOFI(rpmSpec spec)
 	free(ofi->readBuf);
 	free(ofi);
 	rpmPopMacro(spec->macros, "__file_name");
+	rpmPopMacro(spec->macros, "__file_lineno");
     }
     return spec->fileStack;
 }
@@ -197,17 +210,7 @@ static parsedSpecLine parseLineType(char *line)
 int specExpand(rpmSpec spec, int lineno, const char *sbuf,
 		char **obuf)
 {
-    char lnobuf[16];
-    int rc;
-
-    snprintf(lnobuf, sizeof(lnobuf), "%d", lineno);
-    rpmPushMacroFlags(spec->macros, "__file_lineno", NULL, lnobuf, RMIL_SPEC, RPMMACRO_LITERAL);
-
-    rc = (rpmExpandMacros(spec->macros, sbuf, obuf, 0) < 0);
-
-    rpmPopMacro(spec->macros, "__file_lineno");
-
-    return rc;
+    return (rpmExpandMacros(spec->macros, sbuf, obuf, 0) < 0);
 }
 
 static int expandMacrosInSpecBuf(rpmSpec spec, int strip)
@@ -570,8 +573,7 @@ after_classification:
     /* Collect parsed line */
     if (spec->parsed == NULL)
 	spec->parsed = newStringBuf();
-    if (!(strip & STRIP_PARSED))
-	appendStringBufAux(spec->parsed, spec->line,(strip & STRIP_TRAILINGSPACE));
+    appendStringBufAux(spec->parsed, spec->line,(strip & STRIP_TRAILINGSPACE));
 
     /* FIX: spec->readStack->next should be dependent */
     return 0;
@@ -593,6 +595,18 @@ int parseLines(rpmSpec spec, int strip, ARGV_t *avp, StringBuf *sbp)
 	*sbp = newStringBuf();
 
     while (! (nextPart = isPart(spec->line))) {
+	/* HACK: Emit a legible error on the obsolete %patchN form for now */
+	if (sbp == &(spec->prep)) {
+	    size_t slen = strlen(spec->line);
+	    if (slen >= 7 && risdigit(spec->line[6]) &&
+		rstreqn(spec->line, "%patch", 6))
+	    {
+		rpmlog(RPMLOG_ERR, _("%%patchN is obsolete, "
+		    "use %%patch N (or %%patch -P N): %s\n"), spec->line);
+		nextPart = PART_ERROR;
+		break;
+	    }
+	}
 	if (avp)
 	    argvAdd(avp, spec->line);
 	if (sbp)

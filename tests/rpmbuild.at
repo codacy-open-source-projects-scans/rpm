@@ -152,6 +152,24 @@ runroot rpmbuild -bs /data/SPECS/specstep.spec 2>&1|grep ^Executing|cut -d: -f1
 [])
 RPMTEST_CLEANUP
 
+AT_SETUP([rpmbuild script prepend/append])
+AT_KEYWORDS([build])
+RPMDB_INIT
+RPMTEST_CHECK([
+runroot rpmbuild -bb --quiet ${RPMDATA}/SPECS/append.spec
+runroot_other rpm2cpio /build/RPMS/noarch/append-1.0-1.noarch.rpm | cpio -id 2> /dev/null
+cat opt/out
+],
+[0],
+[000
+AAA
+BBB
+CCC
+DDD
+],
+[])
+RPMTEST_CLEANUP
+
 AT_SETUP([rpmbuild -ba autosetup])
 AT_KEYWORDS([build])
 RPMDB_INIT
@@ -356,9 +374,10 @@ RPMDB_INIT
 RPMTEST_CHECK([
 runroot rpmbuild -bp --quiet /data/SPECS/hello-patch.spec
 ],
-[0],
+[1],
 [ignore],
-[warning: %patchN is deprecated (2 usages found), use %patch N (or %patch -P N)
+[error: %patchN is obsolete, use %patch N (or %patch -P N): %patch0 -p1 -b .install
+
 ])
 RPMTEST_CLEANUP
 
@@ -496,6 +515,48 @@ drwxr-x---   1 adm      root            0 Feb 20  2020 ./i/dir
 -rwsr-xr-x   1 root     adm            15 Feb 20  2020 ./i/file
 drwxrwxrwx   1 root     root            0 Feb 20  2020 ./j/dir
 --w--w--w-   1 root     root           15 Feb 20  2020 ./j/file
+],
+[])
+RPMTEST_CLEANUP
+
+AT_SETUP([rpmbuild SOURCE_DATE_EPOCH])
+AT_KEYWORDS([build])
+RPMTEST_CHECK([
+RPMDB_INIT
+
+runroot \
+  --setenv SOURCE_DATE_EPOCH 1699460418 \
+  rpmbuild \
+  -bb --quiet \
+  --define "use_source_date_epoch_as_buildtime 1" \
+  --define "clamp_mtime_to_source_date_epoch 1" \
+  /data/SPECS/source_date_epoch.spec
+
+runroot rpm -q --dump /build/RPMS/noarch/test-1-1.noarch.rpm
+],
+[0],
+[/0.txt 15 1699460418 91751cee0a1ab8414400238a761411daa29643ab4b8243e9a91649e25be53ada 0100644 root root 0 0 0 X
+],
+[])
+RPMTEST_CLEANUP
+
+AT_SETUP([rpmbuild SOURCE_DATE_EPOCH=0])
+AT_KEYWORDS([build])
+RPMTEST_CHECK([
+RPMDB_INIT
+
+runroot \
+  --setenv SOURCE_DATE_EPOCH 0 \
+  rpmbuild \
+  -bb --quiet \
+  --define "use_source_date_epoch_as_buildtime 1" \
+  --define "clamp_mtime_to_source_date_epoch 1" \
+  /data/SPECS/source_date_epoch.spec
+
+runroot rpm -q --dump /build/RPMS/noarch/test-1-1.noarch.rpm
+],
+[0],
+[/0.txt 15 0 91751cee0a1ab8414400238a761411daa29643ab4b8243e9a91649e25be53ada 0100644 root root 0 0 0 X
 ],
 [])
 RPMTEST_CLEANUP
@@ -751,38 +812,49 @@ RPMTEST_CLEANUP
 
 AT_SETUP([Dependency generation 1])
 AT_KEYWORDS([build])
-RPMTEST_CHECK([
 RPMDB_INIT
 
 runroot rpmbuild -bb --quiet \
 		--define "_binary_payload w9.gzdio" \
 		/data/SPECS/filedep.spec
-echo Requires:
+
+RPMTEST_CHECK([
 runroot rpm  -qp --requires /build/RPMS/noarch/filedep-1.0-1.noarch.rpm
-echo Provides:
-runroot rpm -qp --provides /build/RPMS/noarch/filedep-1.0-1.noarch.rpm
-echo Filerequires:
-runroot rpm -qp --qf '[["%{FILENAMES}\t%{FILEREQUIRE}"\n]]' /build/RPMS/noarch/filedep-1.0-1.noarch.rpm
-echo Fileprovides:
-runroot rpm -qp --qf '[["%{FILENAMES}\t%{FILEPROVIDE}"\n]]' /build/RPMS/noarch/filedep-1.0-1.noarch.rpm
 ],
 [0],
-[Requires:
-/bin/f00f
+[/bin/f00f
 /bin/sh
 rpmlib(CompressedFileNames) <= 3.0.4-1
 rpmlib(FileDigests) <= 4.6.0-1
 rpmlib(PayloadFilesHavePrefix) <= 4.0-1
-Provides:
-filedep = 1.0-1
-Filerequires:
-"/etc/foo.conf	"
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -qp --provides /build/RPMS/noarch/filedep-1.0-1.noarch.rpm
+],
+[0],
+[filedep = 1.0-1
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -qp --qf '[["%{FILENAMES}\t%{FILEREQUIRE}"\n]]' /build/RPMS/noarch/filedep-1.0-1.noarch.rpm
+],
+[0],
+["/etc/foo.conf	"
 "/usr/bin/bar	/bin/f00f"
 "/usr/bin/foo	/bin/sh"
 "/usr/share/doc/filedep	"
 "/usr/share/doc/filedep/README	"
-Fileprovides:
-"/etc/foo.conf	"
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -qp --qf '[["%{FILENAMES}\t%{FILEPROVIDE}"\n]]' /build/RPMS/noarch/filedep-1.0-1.noarch.rpm
+],
+[0],
+["/etc/foo.conf	"
 "/usr/bin/bar	"
 "/usr/bin/foo	"
 "/usr/share/doc/filedep	"

@@ -148,8 +148,6 @@ struct rpmSpec_s {
     StringBuf parsed;		/*!< parsed spec contents */
 
     Package packages;		/*!< Package list. */
-
-    int numConverted;		/*!< no. of automatic %patchN conversions */
 };
 
 #define PACKAGE_NUM_DEPS 12
@@ -252,7 +250,6 @@ typedef enum rpmParseState_e {
 #define STRIP_NOTHING             0
 #define STRIP_TRAILINGSPACE (1 << 0)
 #define STRIP_COMMENTS      (1 << 1)
-#define STRIP_PARSED        (1 << 2) /* Avoid adding to spec->parsed (hack) */
 
 #define ALLOW_EMPTY         (1 << 16)
 
