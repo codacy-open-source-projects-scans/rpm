@@ -1219,7 +1219,7 @@ static unsigned long getmem_proc(int thread)
 static void doGetncpus(rpmMacroBuf mb, rpmMacroEntry me, ARGV_t argv, size_t *parsed)
 {
     const char *sizemacro = NULL;
-    const char *arg = argv[1] ? argv[1] : "total";
+    const char *arg = (argv && argv[1]) ? argv[1] : "total";
     char buf[32];
     unsigned int ncpus = getncpus();
     unsigned long mem = 0;
@@ -1253,6 +1253,9 @@ static void doGetncpus(rpmMacroBuf mb, rpmMacroEntry me, ARGV_t argv, size_t *pa
 	if (mcpus < ncpus)
 	    ncpus = mcpus;
     }
+    /* Ensure at least one CPU, no matter how starved */
+    if (ncpus < 1)
+	ncpus = 1;
 
     sprintf(buf, "%u", ncpus);
     rpmMacroBufAppendStr(mb, buf);

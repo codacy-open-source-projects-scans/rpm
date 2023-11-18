@@ -15,46 +15,61 @@
 #include <archive.h>
 #include <archive_entry.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include "debug.h"
 
 #define BUFSIZE (128*1024)
 
 int compress = 1;
+const char *format = "pax";
 
 static struct poptOption optionsTable[] = {
     { "nocompression", 'n', POPT_ARG_VAL, &compress, 0,
-        N_("create uncompressed tar file"),
+        N_("create uncompressed archive"),
+        NULL },
+    { "format", 'f', POPT_ARG_STRING, &format, 0,
+	N_("archive format (pax|cpio)"),
         NULL },
     POPT_AUTOHELP
     POPT_TABLEEND
 };
 
-static void fill_archive_entry(struct archive_entry * entry, rpmfi fi)
+static void fill_archive_entry(struct archive_entry * entry, rpmfi fi,
+				char **hardlink)
 {
     archive_entry_clear(entry);
     const char * dn = rpmfiDN(fi);
     if (!strcmp(dn, "")) dn = "/";
+    struct stat sb;
 
     char * filename = rstrscat(NULL, ".", dn, rpmfiBN(fi), NULL);
     archive_entry_copy_pathname(entry, filename);
     _free(filename);
 
-    archive_entry_set_size(entry, rpmfiFSize(fi));
-    rpm_mode_t mode = rpmfiFMode(fi);
-    archive_entry_set_filetype(entry, mode & S_IFMT);
-    archive_entry_set_perm(entry, mode);
+    rpmfiStat(fi, 0, &sb);
+    archive_entry_copy_stat(entry, &sb);
 
     archive_entry_set_uname(entry, rpmfiFUser(fi));
     archive_entry_set_gname(entry, rpmfiFGroup(fi));
-    archive_entry_set_rdev(entry, rpmfiFRdev(fi));
-    archive_entry_set_mtime(entry, rpmfiFMtime(fi), 0);
 
-    if (S_ISLNK(mode))
+    if (S_ISLNK(sb.st_mode))
 	archive_entry_set_symlink(entry, rpmfiFLink(fi));
+
+    if (sb.st_nlink > 1) {
+	/* hardlink sizes are special, see rpmfiStat() */
+	archive_entry_set_size(entry, rpmfiFSize(fi));
+	if (rpmfiArchiveHasContent(fi)) {
+	    _free(*hardlink);
+	    *hardlink = xstrdup(archive_entry_pathname(entry));
+	} else {
+	    archive_entry_set_hardlink(entry, *hardlink);
+	}
+    }
+
 }
 
-static void write_file_content(struct archive * a, char * buf, rpmfi fi)
+static int write_file_content(struct archive * a, char * buf, rpmfi fi)
 {
     rpm_loff_t left = rpmfiFSize(fi);
     size_t len, read;
@@ -63,13 +78,19 @@ static void write_file_content(struct archive * a, char * buf, rpmfi fi)
 	len = (left > BUFSIZE ? BUFSIZE : left);
 	read = rpmfiArchiveRead(fi, buf, len);
 	if (read==len) {
-	    archive_write_data(a, buf, len);
+	    if (archive_write_data(a, buf, len) < 0) {
+		fprintf(stderr, "Error writing archive: %s\n",
+				archive_error_string(a));
+		break;
+	    }
 	} else {
 	    fprintf(stderr, "Error reading file from rpm payload\n");
 	    break;
 	}
 	left -= len;
     }
+
+    return (left > 0);
 }
 
 static int process_package(rpmts ts, const char * filename)
@@ -78,6 +99,7 @@ static int process_package(rpmts ts, const char * filename)
     FD_t gzdi;
     Header h;
     int rc = 0;
+    int format_code = 0;
     char * rpmio_flags = NULL;
     struct archive *a;
     struct archive_entry *entry;
@@ -141,10 +163,20 @@ static int process_package(rpmts ts, const char * filename)
 	    exit(EXIT_FAILURE);
 	}
     }
-    if (archive_write_set_format_pax_restricted(a) != ARCHIVE_OK) {
-	fprintf(stderr, "Error: Format pax restricted is not supported\n");
+
+    if (rstreq(format, "pax")) {
+	format_code = ARCHIVE_FORMAT_TAR_PAX_RESTRICTED;
+    } else if (rstreq(format, "cpio")) {
+	format_code = ARCHIVE_FORMAT_CPIO_SVR4_NOCRC;
+    } else {
+	rc = ARCHIVE_FAILED;
+    }
+
+    if (archive_write_set_format(a, format_code) != ARCHIVE_OK) {
+	fprintf(stderr, "Error: Format %s is not supported\n", format);
 	exit(EXIT_FAILURE);
     }
+
     if (!isatty(STDOUT_FILENO)) {
 	archive_write_open_fd(a, STDOUT_FILENO);
     } else {
@@ -188,24 +220,26 @@ static int process_package(rpmts ts, const char * filename)
 	    break;
 	}
 
-	rpm_mode_t mode = rpmfiFMode(fi);
-	int nlink = rpmfiFNlink(fi);
+	fill_archive_entry(entry, fi, &hardlink);
 
-	fill_archive_entry(entry, fi);
-
-	if (nlink > 1) {
-	    if (rpmfiArchiveHasContent(fi)) {
-		_free(hardlink);
-		hardlink = xstrdup(archive_entry_pathname(entry));
+	if (archive_write_header(a, entry) != ARCHIVE_OK) {
+	    if (archive_errno(a) == ERANGE) {
+		fprintf(stderr,
+			"Warning: file too large for format, skipping: %s\n",
+			rpmfiFN(fi));
+		continue;
 	    } else {
-		archive_entry_set_hardlink(entry, hardlink);
+		fprintf(stderr, "Error writing archive: %s (%d)\n",
+				archive_error_string(a), archive_errno(a));
+		break;
 	    }
 	}
 
-	archive_write_header(a, entry);
-
-	if (S_ISREG(mode) && (nlink == 1 || rpmfiArchiveHasContent(fi))) {
-	    write_file_content(a, buf, fi);
+	if (S_ISREG(archive_entry_mode(entry)) && rpmfiArchiveHasContent(fi)) {
+	    if (write_file_content(a, buf, fi)) {
+		rc = ARCHIVE_FAILED;
+		break;
+	    }
 	}
     }
     /* End of iteration is not an error */
@@ -217,7 +251,9 @@ static int process_package(rpmts ts, const char * filename)
 
     Fclose(gzdi);	/* XXX gzdi == fdi */
     archive_entry_free(entry);
-    archive_write_close(a);
+    rc = archive_write_close(a);
+    if (rc != ARCHIVE_OK)
+	fprintf(stderr, "Error writing archive: %s\n", archive_error_string(a));
     archive_write_free(a);
     buf = _free(buf);
     rpmfilesFree(files);
@@ -237,6 +273,12 @@ int main(int argc, const char *argv[])
 
     optCon = poptGetContext(NULL, argc, argv, optionsTable, 0);
     poptSetOtherOptionHelp(optCon, "[OPTIONS]* <FILES>");
+
+    if (rstreq(basename(argv[0]), "rpm2cpio")) {
+	format = "cpio";
+	compress = 0;
+    }
+
     while ((rc = poptGetNextOpt(optCon)) != -1) {
 	if (rc < 0) {
 	    fprintf(stderr, "%s: %s\n",
