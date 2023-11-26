@@ -931,7 +931,11 @@ static rpmRC parseSpecSection(rpmSpec *specptr, int secondary)
 	    parsePart = parseList(spec, "%sourcelist", RPMTAG_SOURCE);
 	    break;
 	case PART_PREP:
-	    parsePart = parsePrep(spec);
+	    rpmPushMacroAux(NULL, "setup", "-", doSetupMacro, spec, -1, 0, 0);
+	    rpmPushMacroAux(NULL, "patch", "-", doPatchMacro, spec, -1, 0, 0);
+	    parsePart = parseSimpleScript(spec, "%prep", &(spec->prep));
+	    rpmPopMacro(NULL, "patch");
+	    rpmPopMacro(NULL, "setup");
 	    break;
 	case PART_CONF:
 	    parsePart = parseSimpleScript(spec, "%conf", &(spec->conf));
@@ -1187,17 +1191,15 @@ rpmSpec rpmSpecParse(const char *specFile, rpmSpecFlags flags,
     return spec;
 }
 
-rpmRC parseGeneratedSpecs(rpmSpec spec)
+static rpmRC parseSpecParts(rpmSpec spec, const char *pattern)
 {
     ARGV_t argv = NULL;
     int argc = 0;
-    int i;
     rpmRC rc = RPMRC_OK;
 
-    char * specPattern = rpmGenPath("%{specpartsdir}", NULL, "*.specpart");
     /* rpmGlob returns files sorted */
-    if (rpmGlob(specPattern, &argc, &argv) == 0) {
-	for (i = 0; i < argc; i++) {
+    if (rpmGlob(pattern, &argc, &argv) == 0) {
+	for (int i = 0; i < argc; i++) {
 	    rpmlog(RPMLOG_NOTICE, "Reading %s\n", argv[i]);
 	    pushOFI(spec, argv[i]);
 	    snprintf(spec->fileStack->readBuf, spec->fileStack->readBufLen,
@@ -1210,6 +1212,13 @@ rpmRC parseGeneratedSpecs(rpmSpec spec)
 	}
 	argvFree(argv);
     }
+    return rc;
+}
+
+rpmRC parseGeneratedSpecs(rpmSpec spec)
+{
+    char * specPattern = rpmGenPath("%{specpartsdir}", NULL, "*.specpart");
+    rpmRC rc = parseSpecParts(spec, specPattern);
     free(specPattern);
     if (!rc) {
 	rc = finalizeSpec(spec);
