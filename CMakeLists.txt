@@ -50,6 +50,7 @@ set(CMAKE_SHARED_LIBRARY_PREFIX "")
 set(CMAKE_SHARED_MODULE_PREFIX "")
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 include(GNUInstallDirs)
+include(CheckSymbolExists)
 add_compile_definitions(_GNU_SOURCE)
 add_definitions(-D_FILE_OFFSET_BITS=64)
 
@@ -176,7 +177,7 @@ include(CheckCCompilerFlag)
 set(OPTFUNCS
 	stpcpy stpncpy putenv mempcpy fdatasync lutimes mergesort
 	getauxval setprogname __progname syncfs sched_getaffinity unshare
-	secure_getenv __secure_getenv mremap
+	secure_getenv __secure_getenv mremap strchrnul
 )
 set(REQFUNCS
 	mkstemp getcwd basename dirname realpath setenv unsetenv regcomp
@@ -350,6 +351,7 @@ if (LIBDW_FOUND)
 	set(HAVE_LIBDW 1)
 endif()
 
+check_symbol_exists(GLOB_ONLYDIR "glob.h" HAVE_GLOB_ONLYDIR)
 check_symbol_exists(major "sys/sysmacros.h" MAJOR_IN_SYSMACROS)
 if (NOT MAJOR_IN_SYSMACROS)
 	check_symbol_exists(major "sys/mkdev.h" MAJOR_IN_MKDEV)

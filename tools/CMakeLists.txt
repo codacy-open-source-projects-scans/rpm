@@ -10,16 +10,24 @@ add_executable(rpmspec rpmspec.c cliutils)
 add_executable(rpmdeps rpmdeps.c)
 add_executable(rpmgraph rpmgraph.c)
 add_executable(rpmlua rpmlua.c)
-add_executable(rpmsort rpmsort.c)
 add_executable(rpmuncompress rpmuncompress.c)
-add_executable(elfdeps elfdeps.c)
 
 target_link_libraries(rpmsign PRIVATE librpmsign)
 target_link_libraries(rpmlua PRIVATE LUA::LUA)
-target_link_libraries(elfdeps PRIVATE PkgConfig::LIBELF)
 target_link_libraries(rpmbuild PRIVATE librpmbuild)
 target_link_libraries(rpmspec PRIVATE librpmbuild)
 target_link_libraries(rpmdeps PRIVATE librpmbuild)
+
+if (HAVE_STRCHRNUL)
+	add_executable(rpmsort rpmsort.c)
+	install(TARGETS rpmsort)
+endif()
+
+if (LIBELF_FOUND)
+	add_executable(elfdeps elfdeps.c)
+	target_link_libraries(elfdeps PRIVATE PkgConfig::LIBELF)
+	install(TARGETS elfdeps DESTINATION ${RPM_CONFIGDIR})
+endif()
 
 target_include_directories(rpmlua PRIVATE ${CMAKE_SOURCE_DIR}/rpmio)
 target_include_directories(rpmgraph PRIVATE ${CMAKE_SOURCE_DIR}/lib)
@@ -39,6 +47,8 @@ endif()
 get_property(executables DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 foreach(exe ${executables})
 	target_link_libraries(${exe} PRIVATE librpmio librpm PkgConfig::POPT)
+	target_link_libraries(${exe} PRIVATE ${Intl_LIBRARIES})
+	target_include_directories(${exe} PRIVATE ${Intl_INCLUDE_DIRS})
 endforeach()
 
 foreach(cmd rpmverify rpmquery)
@@ -56,7 +66,7 @@ endif()
 
 install(TARGETS
 	rpm rpmdb rpmkeys rpmsign rpmbuild rpmspec
-	rpmlua rpmgraph rpmsort
+	rpmlua rpmgraph
 )
-install(TARGETS elfdeps rpmdeps rpmuncompress DESTINATION ${RPM_CONFIGDIR})
+install(TARGETS rpmdeps rpmuncompress DESTINATION ${RPM_CONFIGDIR})
 
