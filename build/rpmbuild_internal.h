@@ -21,6 +21,18 @@
 #define ALLOWED_CHARS_EVR ALLOWED_CHARS_VERREL "-:"
 #define LEN_AND_STR(_tag) (sizeof(_tag)-1), (_tag)
 
+
+enum sections_e {
+    SECT_PREP		= 0,
+    SECT_CONF		= 1,
+    SECT_BUILDREQUIRES	= 2,
+    SECT_BUILD		= 3,
+    SECT_INSTALL	= 4,
+    SECT_CHECK		= 5,
+    SECT_CLEAN		= 6,
+};
+#define NR_SECT 7
+
 struct TriggerFileEntry {
     int index;
     char * fileName;
@@ -137,13 +149,8 @@ struct rpmSpec_s {
     rpmMacroContext macros;
     rpmstrPool pool;
 
-    StringBuf prep;		/*!< %prep scriptlet. */
-    StringBuf conf;		/*!< %conf scriptlet. */
-    StringBuf buildrequires;	/*!< %buildrequires scriptlet. */
-    StringBuf build;		/*!< %build scriptlet. */
-    StringBuf install;		/*!< %install scriptlet. */
-    StringBuf check;		/*!< %check scriptlet. */
-    StringBuf clean;		/*!< %clean scriptlet. */
+    StringBuf sections[NR_SECT]; /*!< spec sections (%prep etc) */
+    ARGV_t buildopts[NR_SECT];	/*!< per-section buildsystem options */
 
     StringBuf parsed;		/*!< parsed spec contents */
 
@@ -633,6 +640,10 @@ RPM_GNUC_INTERNAL
 void doSetupMacro(rpmMacroBuf mb, rpmMacroEntry me, ARGV_t margs, size_t *parsed);
 RPM_GNUC_INTERNAL
 void doPatchMacro(rpmMacroBuf mb, rpmMacroEntry me, ARGV_t margs, size_t *parsed);
+
+/* Return section number, -1 on error */
+RPM_GNUC_INTERNAL
+int getSection(const char *name);
 
 #ifdef __cplusplus
 }

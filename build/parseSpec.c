@@ -25,6 +25,8 @@
 #define ISMACRO(s,m,len) (rstreqn((s), (m), len) && !risalpha((s)[len]))
 #define ISMACROWITHARG(s,m,len) (rstreqn((s), (m), len) && (risblank((s)[len]) || !(s)[len]))
 
+static rpmRC parseSpecParts(rpmSpec spec, const char *pattern);
+
 typedef struct OpenFileInfo {
     char * fileName;
     FILE *fp;
@@ -596,7 +598,7 @@ int parseLines(rpmSpec spec, int strip, ARGV_t *avp, StringBuf *sbp)
 
     while (! (nextPart = isPart(spec->line))) {
 	/* HACK: Emit a legible error on the obsolete %patchN form for now */
-	if (sbp == &(spec->prep)) {
+	if (sbp == &(spec->sections[SECT_PREP])) {
 	    size_t slen = strlen(spec->line);
 	    if (slen >= 7 && risdigit(spec->line[6]) &&
 		rstreqn(spec->line, "%patch", 6))
@@ -894,6 +896,103 @@ exit:
     return res;
 }
 
+struct sectname_s {
+    const char *name;
+    int section;
+};
+
+struct sectname_s sectList[] = {
+    { "prep", SECT_PREP },
+    { "conf", SECT_CONF },
+    { "generate_buildrequires", SECT_BUILDREQUIRES },
+    { "build", SECT_BUILD },
+    { "install", SECT_INSTALL },
+    { "check", SECT_CHECK },
+    { "clean", SECT_CLEAN },
+    { NULL, -1 }
+};
+
+int getSection(const char *name)
+{
+    int sn = -1;
+    for (struct sectname_s *sc = sectList; sc->name; sc++) {
+	if (rstreq(name, sc->name)) {
+	    sn = sc->section;
+	    break;
+	}
+    }
+    return sn;
+}
+
+static rpmRC parseBuildsysSect(rpmSpec spec, const char *prefix,
+				struct sectname_s *sc, FD_t fd)
+{
+    rpmRC rc = RPMRC_OK;
+
+    if (spec->sections[sc->section] == NULL) {
+	char *mn = rstrscat(NULL, "buildsystem_", prefix, "_", sc->name, NULL);
+	if (rpmMacroIsParametric(NULL, mn)) {
+	    char *args = NULL;
+	    if (spec->buildopts[sc->section]) {
+		ARGV_t av = NULL;
+		argvAdd(&av, "--");
+		argvAppend(&av, spec->buildopts[sc->section]);
+		args = argvJoin(av, " ");
+		free(av);
+	    }
+	    char *buf = rstrscat(NULL, "%", sc->name, "\n",
+				       "%", mn, " ",
+				       args ? args : "",
+				       "\n", NULL);
+	    size_t blen = strlen(buf);
+	    if (Fwrite(buf, blen, 1, fd) < blen) {
+		rc = RPMRC_FAIL;
+		rpmlog(RPMLOG_ERR,
+			    _("failed to write buildsystem %s %%%s: %s\n"),
+			    prefix, sc->name, strerror(errno));
+	    }
+	    free(buf);
+	    free(args);
+	}
+	free(mn);
+    }
+    return rc;
+}
+
+static rpmRC parseBuildsystem(rpmSpec spec)
+{
+    rpmRC rc = RPMRC_OK;
+    char *buildsystem = rpmExpand("%{?buildsystem}", NULL);
+    if (*buildsystem) {
+	char *path = NULL;
+
+	FD_t fd = rpmMkTempFile(NULL, &path);
+	if (fd == NULL) {
+	    rpmlog(RPMLOG_ERR,
+		_("failed to create temp file for buildsystem: %s\n"),
+		strerror(errno));
+	    rc = RPMRC_FAIL;
+	    goto exit;
+	}
+
+	for (struct sectname_s *sc = sectList; !rc && sc->name; sc++) {
+	    rc = parseBuildsysSect(spec, buildsystem, sc, fd);
+	    if (!rc && spec->sections[sc->section] == NULL)
+		rc = parseBuildsysSect(spec, "default", sc, fd);
+	}
+
+	if (!rc)
+	    rc = parseSpecParts(spec, path);
+	if (!rc)
+	    unlink(path);
+	Fclose(fd);
+    }
+
+exit:
+    free(buildsystem);
+    return rc;
+}
+
 static rpmSpec parseSpec(const char *specFile, rpmSpecFlags flags,
 			 const char *buildRoot, int recursing);
 
@@ -933,28 +1032,34 @@ static rpmRC parseSpecSection(rpmSpec *specptr, int secondary)
 	case PART_PREP:
 	    rpmPushMacroAux(NULL, "setup", "-", doSetupMacro, spec, -1, 0, 0);
 	    rpmPushMacroAux(NULL, "patch", "-", doPatchMacro, spec, -1, 0, 0);
-	    parsePart = parseSimpleScript(spec, "%prep", &(spec->prep));
+	    parsePart = parseSimpleScript(spec, "%prep",
+					&(spec->sections[SECT_PREP]));
 	    rpmPopMacro(NULL, "patch");
 	    rpmPopMacro(NULL, "setup");
 	    break;
 	case PART_CONF:
-	    parsePart = parseSimpleScript(spec, "%conf", &(spec->conf));
+	    parsePart = parseSimpleScript(spec, "%conf",
+					&(spec->sections[SECT_CONF]));
 	    break;
 	case PART_BUILDREQUIRES:
 	    parsePart = parseSimpleScript(spec, "%generate_buildrequires",
-					  &(spec->buildrequires));
+				      &(spec->sections[SECT_BUILDREQUIRES]));
 	    break;
 	case PART_BUILD:
-	    parsePart = parseSimpleScript(spec, "%build", &(spec->build));
+	    parsePart = parseSimpleScript(spec, "%build",
+					&(spec->sections[SECT_BUILD]));
 	    break;
 	case PART_INSTALL:
-	    parsePart = parseSimpleScript(spec, "%install", &(spec->install));
+	    parsePart = parseSimpleScript(spec, "%install",
+					&(spec->sections[SECT_INSTALL]));
 	    break;
 	case PART_CHECK:
-	    parsePart = parseSimpleScript(spec, "%check", &(spec->check));
+	    parsePart = parseSimpleScript(spec, "%check",
+					&(spec->sections[SECT_CHECK]));
 	    break;
 	case PART_CLEAN:
-	    parsePart = parseSimpleScript(spec, "%clean", &(spec->clean));
+	    parsePart = parseSimpleScript(spec, "%clean",
+					&(spec->sections[SECT_CLEAN]));
 	    break;
 	case PART_CHANGELOG:
 	    parsePart = parseChangelog(spec);
@@ -1055,6 +1160,9 @@ static rpmRC parseSpecSection(rpmSpec *specptr, int secondary)
 	}
     }
 
+    if (!secondary && parseBuildsystem(spec))
+	goto errxit;
+
     /* Add arch for each package */
     addArch(spec);
 
@@ -1105,10 +1213,10 @@ static rpmSpec parseSpec(const char *specFile, rpmSpecFlags flags,
     if (parseSpecSection(&spec, 0) != RPMRC_OK)
 	goto errxit;
 
-    if (spec->clean == NULL) {
-	char *body = rpmExpand("%{?buildroot: %{__rm} -rf %{buildroot}}", NULL);
-	spec->clean = newStringBuf();
-	appendLineStringBuf(spec->clean, body);
+    if (spec->sections[SECT_CLEAN] == NULL) {
+	char *body = rpmExpand("%{buildsystem_default_clean}", NULL);
+	spec->sections[SECT_CLEAN] = newStringBuf();
+	appendLineStringBuf(spec->sections[SECT_CLEAN], body);
 	free(body);
     }
 
