@@ -18,6 +18,8 @@ option(ENABLE_SQLITE "Enable sqlite rpmdb support" ON)
 option(ENABLE_NDB "Enable ndb rpmdb support" ON)
 option(ENABLE_BDB_RO "Enable read-only Berkeley DB rpmdb support (EXPERIMENTAL)" OFF)
 option(ENABLE_TESTSUITE "Enable test-suite" ON)
+option(ENABLE_ASAN "Enable address-sanitizer" OFF)
+option(ENABLE_UBSAN "Enable undefined behavior-sanitizer" OFF)
 
 option(WITH_CAP "Build with capability support" ON)
 option(WITH_ACL "Build with ACL support" ON)
@@ -204,6 +206,7 @@ pkg_check_modules(ZSTD IMPORTED_TARGET libzstd>=1.3.8)
 pkg_check_modules(LIBELF IMPORTED_TARGET libelf)
 pkg_check_modules(LIBDW IMPORTED_TARGET libdw)
 pkg_check_modules(LIBLZMA IMPORTED_TARGET liblzma>=5.2.0)
+pkg_check_modules(LIBARCHIVE REQUIRED IMPORTED_TARGET libarchive)
 
 # Lua module does not ship an IMPORTED target, define our own
 add_library(LUA::LUA INTERFACE IMPORTED)
@@ -262,10 +265,6 @@ endif()
 
 if (WITH_SELINUX)
 	pkg_check_modules(SELINUX REQUIRED IMPORTED_TARGET libselinux)
-endif()
-
-if (WITH_ARCHIVE)
-	pkg_check_modules(LIBARCHIVE REQUIRED IMPORTED_TARGET libarchive)
 endif()
 
 if (WITH_FSVERITY)
@@ -371,6 +370,20 @@ add_compile_definitions(HAVE_CONFIG_H)
 add_compile_options(-Wall -Wpointer-arith -Wmissing-prototypes -Wstrict-prototypes -Wempty-body)
 if (ENABLE_WERROR)
 	add_compile_options(-Werror)
+endif()
+
+if (ENABLE_ASAN)
+	add_compile_options(-fsanitize=address)
+	add_link_options(-fsanitize=address)
+endif()
+
+if (ENABLE_UBSAN)
+	add_compile_options(-fsanitize=undefined)
+	add_link_options(-fsanitize=undefined)
+endif()
+
+if (ENABLE_ASAN OR ENABLE_UBSAN)
+	add_compile_options(-fno-omit-frame-pointer)
 endif()
 
 # try to ensure some compiler sanity
