@@ -28,6 +28,7 @@ static rpm_time_t getBuildTime(void)
     char *srcdate;
     time_t epoch;
     char *endptr;
+    char *timestr = NULL;
 
     srcdate = getenv("SOURCE_DATE_EPOCH");
     if (srcdate && rpmExpandNumeric("%{?use_source_date_epoch_as_buildtime}")) {
@@ -39,6 +40,10 @@ static rpm_time_t getBuildTime(void)
             buildTime = (uint32_t) epoch;
     } else
         buildTime = (uint32_t) time(NULL);
+
+    rasprintf(&timestr, "%u", buildTime);
+    setenv("RPM_BUILD_TIME", timestr, 1);
+    free(timestr);
 
     return buildTime;
 }
@@ -342,8 +347,8 @@ static rpmRC buildSpec(rpmts ts, BTA_t buildArgs, rpmSpec spec, int what)
 	    setenv("SOURCE_DATE_EPOCH", sdestr, 0);
 	    rpmtdFreeData(&td);
 	} else {
-	    rpmlog(RPMLOG_WARNING, _("source_date_epoch_from_changelog set but "
-	        "%%changelog is missing\n"));
+	    rpmlog(RPMLOG_WARNING, _("%%source_date_epoch_from_changelog is set, but "
+	        "%%changelog has no entries to take a date from\n"));
 	}
     }
 

@@ -476,6 +476,33 @@ If the main section exists, it must come first to avoid ambiguity.
 Otherwise, append and prepend can be used in any order and multiple
 times, even if the corresponding main section does not exist.
 
+During the execution of build scriptlets, (at least) the following
+rpm-specific environment variables are set:
+
+Variable            | Description
+---------------------------------------------------
+RPM_ARCH            | Architecture of the package
+RPM_BUILD_DIR       | The build directory of the package
+RPM_BUILD_NCPUS     | The number of CPUs available for the build
+RPM_BUILD_ROOT      | The buildroot directory of the package
+RPM_BUILD_TIME      | The build time of the package (seconds since the epoch)
+RPM_DOC_DIR         | The special documentation directory of the package
+RPM_LD_FLAGS        | Linker flags
+RPM_OPT_FLAGS       | Compiler flags
+RPM_OS              | OS of the package
+RPM_PACKAGE_NAME    | Rpm name of the source package
+RPM_PACKAGE_VERSION | Rpm version of the source package
+RPM_PACKAGE_RELEASE | Rpm release of the source package
+RPM_SOURCE_DIR      | The source directory of the package
+RPM_SPECPARTS_DIR   | The directory of dynamically generated spec parts
+
+Note: many of these have macro counterparts which may seem more convenient
+and consistent with the rest of the spec, but one should always use
+the environment variables inside the scripts. The reason for this is
+that macros are evaluated during spec parse and may not be up-to-date,
+whereas environment variables are evaluated at the time of their execution
+in the script.
+
 ### %prep
 
 %prep prepares the sources for building. This is where sources are
