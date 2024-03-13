@@ -25,7 +25,9 @@
 #define ISMACRO(s,m,len) (rstreqn((s), (m), len) && !risalpha((s)[len]))
 #define ISMACROWITHARG(s,m,len) (rstreqn((s), (m), len) && (risblank((s)[len]) || !(s)[len]))
 
-static rpmRC parseSpecParts(rpmSpec spec, const char *pattern);
+
+static rpmRC parseSpecParts(rpmSpec spec, const char *pattern,
+			    enum parseStages stage);
 
 typedef struct OpenFileInfo {
     char * fileName;
@@ -39,47 +41,48 @@ typedef struct OpenFileInfo {
 
 static const struct PartRec {
     int part;
+    int prebuildonly;
     size_t len;
     const char * token;
 } partList[] = {
-    { PART_PREAMBLE,      LEN_AND_STR("%package")},
-    { PART_PREP,          LEN_AND_STR("%prep")},
-    { PART_BUILDREQUIRES, LEN_AND_STR("%generate_buildrequires")},
-    { PART_CONF,        LEN_AND_STR("%conf")},
-    { PART_BUILD,         LEN_AND_STR("%build")},
-    { PART_INSTALL,       LEN_AND_STR("%install")},
-    { PART_CHECK,         LEN_AND_STR("%check")},
-    { PART_CLEAN,         LEN_AND_STR("%clean")},
-    { PART_PREUN,         LEN_AND_STR("%preun")},
-    { PART_POSTUN,        LEN_AND_STR("%postun")},
-    { PART_PRETRANS,      LEN_AND_STR("%pretrans")},
-    { PART_POSTTRANS,     LEN_AND_STR("%posttrans")},
-    { PART_PREUNTRANS,    LEN_AND_STR("%preuntrans")},
-    { PART_POSTUNTRANS,   LEN_AND_STR("%postuntrans")},
-    { PART_PRE,           LEN_AND_STR("%pre")},
-    { PART_POST,          LEN_AND_STR("%post")},
-    { PART_FILES,         LEN_AND_STR("%files")},
-    { PART_CHANGELOG,     LEN_AND_STR("%changelog")},
-    { PART_DESCRIPTION,   LEN_AND_STR("%description")},
-    { PART_TRIGGERPOSTUN, LEN_AND_STR("%triggerpostun")},
-    { PART_TRIGGERPREIN,  LEN_AND_STR("%triggerprein")},
-    { PART_TRIGGERUN,     LEN_AND_STR("%triggerun")},
-    { PART_TRIGGERIN,     LEN_AND_STR("%triggerin")},
-    { PART_TRIGGERIN,     LEN_AND_STR("%trigger")},
-    { PART_VERIFYSCRIPT,  LEN_AND_STR("%verifyscript")},
-    { PART_POLICIES,      LEN_AND_STR("%sepolicy")},
-    { PART_FILETRIGGERIN,	    LEN_AND_STR("%filetriggerin")},
-    { PART_FILETRIGGERIN,	    LEN_AND_STR("%filetrigger")},
-    { PART_FILETRIGGERUN,	    LEN_AND_STR("%filetriggerun")},
-    { PART_FILETRIGGERPOSTUN,	    LEN_AND_STR("%filetriggerpostun")},
-    { PART_TRANSFILETRIGGERIN,	    LEN_AND_STR("%transfiletriggerin")},
-    { PART_TRANSFILETRIGGERIN,	    LEN_AND_STR("%transfiletrigger")},
-    { PART_TRANSFILETRIGGERUN,	    LEN_AND_STR("%transfiletriggerun")},
-    { PART_TRANSFILETRIGGERPOSTUN,  LEN_AND_STR("%transfiletriggerpostun")},
-    { PART_EMPTY,		    LEN_AND_STR("%end")},
-    { PART_PATCHLIST,               LEN_AND_STR("%patchlist")},
-    { PART_SOURCELIST,              LEN_AND_STR("%sourcelist")},
-    {0, 0, 0}
+    { PART_PREAMBLE,      0, LEN_AND_STR("%package")},
+    { PART_PREP,          1, LEN_AND_STR("%prep")},
+    { PART_BUILDREQUIRES, 1, LEN_AND_STR("%generate_buildrequires")},
+    { PART_CONF,          1, LEN_AND_STR("%conf")},
+    { PART_BUILD,         1, LEN_AND_STR("%build")},
+    { PART_INSTALL,       1, LEN_AND_STR("%install")},
+    { PART_CHECK,         1, LEN_AND_STR("%check")},
+    { PART_CLEAN,         1, LEN_AND_STR("%clean")},
+    { PART_PREUN,         0, LEN_AND_STR("%preun")},
+    { PART_POSTUN,        0, LEN_AND_STR("%postun")},
+    { PART_PRETRANS,      0, LEN_AND_STR("%pretrans")},
+    { PART_POSTTRANS,     0, LEN_AND_STR("%posttrans")},
+    { PART_PREUNTRANS,    0, LEN_AND_STR("%preuntrans")},
+    { PART_POSTUNTRANS,   0, LEN_AND_STR("%postuntrans")},
+    { PART_PRE,           0, LEN_AND_STR("%pre")},
+    { PART_POST,          0, LEN_AND_STR("%post")},
+    { PART_FILES,         0, LEN_AND_STR("%files")},
+    { PART_CHANGELOG,     0, LEN_AND_STR("%changelog")},
+    { PART_DESCRIPTION,   0, LEN_AND_STR("%description")},
+    { PART_TRIGGERPOSTUN, 0, LEN_AND_STR("%triggerpostun")},
+    { PART_TRIGGERPREIN,  0, LEN_AND_STR("%triggerprein")},
+    { PART_TRIGGERUN,     0, LEN_AND_STR("%triggerun")},
+    { PART_TRIGGERIN,     0, LEN_AND_STR("%triggerin")},
+    { PART_TRIGGERIN,     0, LEN_AND_STR("%trigger")},
+    { PART_VERIFYSCRIPT,  0, LEN_AND_STR("%verifyscript")},
+    { PART_POLICIES,      0, LEN_AND_STR("%sepolicy")},
+    { PART_FILETRIGGERIN,	    0, LEN_AND_STR("%filetriggerin")},
+    { PART_FILETRIGGERIN,	    0, LEN_AND_STR("%filetrigger")},
+    { PART_FILETRIGGERUN,	    0, LEN_AND_STR("%filetriggerun")},
+    { PART_FILETRIGGERPOSTUN,	    0, LEN_AND_STR("%filetriggerpostun")},
+    { PART_TRANSFILETRIGGERIN,	    0, LEN_AND_STR("%transfiletriggerin")},
+    { PART_TRANSFILETRIGGERIN,	    0, LEN_AND_STR("%transfiletrigger")},
+    { PART_TRANSFILETRIGGERUN,	    0, LEN_AND_STR("%transfiletriggerun")},
+    { PART_TRANSFILETRIGGERPOSTUN,  0, LEN_AND_STR("%transfiletriggerpostun")},
+    { PART_EMPTY,		    0, LEN_AND_STR("%end")},
+    { PART_PATCHLIST,               1, LEN_AND_STR("%patchlist")},
+    { PART_SOURCELIST,              1, LEN_AND_STR("%sourcelist")},
+    {0, 0, 0, 0}
 };
 
 int isPart(const char *line)
@@ -96,6 +99,18 @@ int isPart(const char *line)
     }
 
     return (p->token ? p->part : PART_NONE);
+}
+
+static const struct PartRec * getPart(int part)
+{
+    const struct PartRec *p;
+
+    for (p = partList; p->token != NULL; p++) {
+	if (p->part == part) {
+	    return p;
+	}
+    }
+    return NULL;
 }
 
 /**
@@ -982,10 +997,11 @@ static rpmRC parseBuildsystem(rpmSpec spec)
 	}
 
 	if (!rc)
-	    rc = parseSpecParts(spec, path);
+	    rc = parseSpecParts(spec, path, PARSE_BUILDSYS);
 	if (!rc)
 	    unlink(path);
 	Fclose(fd);
+	free(path);
     }
 
 exit:
@@ -996,7 +1012,19 @@ exit:
 static rpmSpec parseSpec(const char *specFile, rpmSpecFlags flags,
 			 const char *buildRoot, int recursing);
 
-static rpmRC parseSpecSection(rpmSpec *specptr, int secondary)
+/* is part allowed at this stage */
+static int checkPart(int parsePart, enum parseStages stage) {
+    if (stage == PARSE_GENERATED) {
+	const struct PartRec *p = getPart(parsePart);
+	if (p && p->prebuildonly ) {
+	    rpmlog(RPMLOG_ERR, _("Section %s is not allowed after build is done!\n"), p->token);
+	    return 1;
+	}
+    }
+    return 0;
+}
+
+static rpmRC parseSpecSection(rpmSpec *specptr, enum parseStages stage)
 {
     rpmSpec spec = *specptr;
     int parsePart = PART_PREAMBLE;
@@ -1020,7 +1048,7 @@ static rpmRC parseSpecSection(rpmSpec *specptr, int secondary)
 	    parsePart = parseEmpty(spec, prevParsePart);
 	    break;
 	case PART_PREAMBLE:
-	    parsePart = parsePreamble(spec, initialPackage);
+	    parsePart = parsePreamble(spec, initialPackage, stage);
 	    initialPackage = 0;
 	    break;
 	case PART_PATCHLIST:
@@ -1109,6 +1137,9 @@ static rpmRC parseSpecSection(rpmSpec *specptr, int secondary)
 	    goto errxit;
 	}
 
+	if (checkPart(parsePart, stage)) {
+	    goto errxit;
+	}
 	if (parsePart == PART_BUILDARCHITECTURES) {
 	    int index;
 	    int x;
@@ -1160,7 +1191,7 @@ static rpmRC parseSpecSection(rpmSpec *specptr, int secondary)
 	}
     }
 
-    if (!secondary && parseBuildsystem(spec))
+    if (stage == PARSE_SPECFILE && parseBuildsystem(spec))
 	goto errxit;
 
     /* Add arch for each package */
@@ -1299,7 +1330,8 @@ rpmSpec rpmSpecParse(const char *specFile, rpmSpecFlags flags,
     return spec;
 }
 
-static rpmRC parseSpecParts(rpmSpec spec, const char *pattern)
+static rpmRC parseSpecParts(rpmSpec spec, const char *pattern,
+			    enum parseStages stage)
 {
     ARGV_t argv = NULL;
     int argc = 0;
@@ -1312,7 +1344,7 @@ static rpmRC parseSpecParts(rpmSpec spec, const char *pattern)
 	    pushOFI(spec, argv[i]);
 	    snprintf(spec->fileStack->readBuf, spec->fileStack->readBufLen,
 		     "# Spec part read from %s\n\n", argv[i]);
-	    if (parseSpecSection(&spec, 1) != RPMRC_OK) {
+	    if (parseSpecSection(&spec, stage) != RPMRC_OK) {
 		rpmlog(RPMLOG_ERR, "parsing failed\n");
 		rc = RPMRC_FAIL;
 		break;
@@ -1326,7 +1358,7 @@ static rpmRC parseSpecParts(rpmSpec spec, const char *pattern)
 rpmRC parseGeneratedSpecs(rpmSpec spec)
 {
     char * specPattern = rpmGenPath("%{specpartsdir}", NULL, "*.specpart");
-    rpmRC rc = parseSpecParts(spec, specPattern);
+    rpmRC rc = parseSpecParts(spec, specPattern, PARSE_GENERATED);
     free(specPattern);
     if (!rc) {
 	rc = finalizeSpec(spec);

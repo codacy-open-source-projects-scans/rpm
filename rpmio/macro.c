@@ -6,6 +6,7 @@
 #include <stdarg.h>
 #include <pthread.h>
 #include <errno.h>
+#include <libgen.h>
 #ifdef HAVE_SCHED_GETAFFINITY
 #include <sched.h>
 #endif
@@ -1300,15 +1301,10 @@ static void doFoo(rpmMacroBuf mb, rpmMacroEntry me, ARGV_t argv, size_t *parsed)
 
     if (rstreq("basename", me->name)) {
 	buf = xstrdup(argv[1]);
-	if ((b = strrchr(buf, '/')) == NULL)
-	    b = buf;
-	else
-	    b++;
+	b = basename(buf);
     } else if (rstreq("dirname", me->name)) {
 	buf = xstrdup(argv[1]);
-	if ((b = strrchr(buf, '/')) != NULL)
-	    *b = '\0';
-	b = buf;
+	b = dirname(buf);
     } else if (rstreq("shrink", me->name)) {
 	/*
 	 * shrink body by removing all leading and trailing whitespaces and
