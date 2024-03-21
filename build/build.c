@@ -78,7 +78,7 @@ static char * buildHost(void)
 
 /**
  */
-static rpmRC doRmSource(rpmSpec spec)
+static int doRmSource(rpmSpec spec)
 {
     struct Source *p;
     Package pkg;
@@ -100,7 +100,7 @@ static rpmRC doRmSource(rpmSpec spec)
 	}
     }
 exit:
-    return !rc ? 0 : 1;
+    return rc;
 }
 
 /*
@@ -110,7 +110,7 @@ rpmRC doScript(rpmSpec spec, rpmBuildFlags what, const char *name,
 	       const char *sb, int test, StringBuf * sb_stdoutp)
 {
     char *scriptName = NULL;
-    char * buildDir = rpmGenPath(spec->rootDir, "%{_builddir}", "");
+    char * buildDir = rpmGenPath(spec->rootDir, "%{builddir}", "");
     char * buildSubdir = rpmGetPath("%{?buildsubdir}", NULL);
     char * buildCmd = NULL;
     char * buildTemplate = NULL;
@@ -126,6 +126,10 @@ rpmRC doScript(rpmSpec spec, rpmBuildFlags what, const char *name,
     rpmRC rc = RPMRC_FAIL; /* assume failure */
     
     switch (what) {
+    case RPMBUILD_MKBUILDDIR:
+	mTemplate = "%{__spec_builddir_template}";
+	mPost = "%{__spec_builddir_post}";
+	mCmd = "%{__spec_builddir_cmd}";
     case RPMBUILD_PREP:
 	mTemplate = "%{__spec_prep_template}";
 	mPost = "%{__spec_prep_post}";
@@ -195,18 +199,11 @@ rpmRC doScript(rpmSpec spec, rpmBuildFlags what, const char *name,
 
     (void) fputs(buildTemplate, fp);
 
-    if (what != RPMBUILD_PREP && what != RPMBUILD_RMBUILD && buildSubdir[0] != '\0')
+    if (what != RPMBUILD_MKBUILDDIR && what != RPMBUILD_PREP && what != RPMBUILD_RMBUILD && buildSubdir[0] != '\0')
 	fprintf(fp, "cd '%s'\n", buildSubdir);
 
     if (what == RPMBUILD_RMBUILD) {
-	if (rpmMacroIsDefined(spec->macros, "specpartsdir")) {
-	    char * buf = rpmExpand("%{specpartsdir}", NULL);
-	    fprintf(fp, "rm -rf '%s'\n", buf);
-	    free(buf);
-	}
-	if (buildSubdir[0] != '\0')
-	    fprintf(fp, "rm -rf '%s' '%s.gemspec'\n",
-		    buildSubdir, buildSubdir);
+	fprintf(fp, "rm -rf '%s'\n", spec->buildDir);
     } else if (sb != NULL)
 	fprintf(fp, "%s", sb);
 
@@ -293,9 +290,9 @@ static int doBuildRequires(rpmSpec spec, int test)
     return rc;
 }
 
-static rpmRC doCheckBuildRequires(rpmts ts, rpmSpec spec, int test)
+static int doCheckBuildRequires(rpmts ts, rpmSpec spec, int test)
 {
-    rpmRC rc = RPMRC_OK;
+    int rc = RPMRC_OK;
     rpmps ps = rpmSpecCheckDeps(ts, spec);
 
     if (ps) {
@@ -308,9 +305,27 @@ static rpmRC doCheckBuildRequires(rpmts ts, rpmSpec spec, int test)
     return rc;
 }
 
-static rpmRC buildSpec(rpmts ts, BTA_t buildArgs, rpmSpec spec, int what)
+static rpmRC doBuildDir(rpmSpec spec, int test, StringBuf *sbp)
 {
-    rpmRC rc = RPMRC_OK;
+    char *doDir = rstrscat(NULL,
+			   "rm -rf '", spec->buildDir, "'\n",
+			   "mkdir -p '", spec->buildDir, "'\n",
+			   NULL);
+
+    rpmRC rc = doScript(spec, RPMBUILD_MKBUILDDIR, "%mkbuilddir",
+			doDir, test, sbp);
+    if (rc) {
+	rpmlog(RPMLOG_ERR,
+		_("failed to create package build directory %s: %s\n"),
+		spec->buildDir, strerror(errno));
+    }
+    free(doDir);
+    return rc;
+}
+
+static int buildSpec(rpmts ts, BTA_t buildArgs, rpmSpec spec, int what)
+{
+    int rc = RPMRC_OK;
     int missing_buildreqs = 0;
     int test = (what & RPMBUILD_NOBUILD);
     char *cookie = buildArgs->cookie ? xstrdup(buildArgs->cookie) : NULL;
@@ -377,11 +392,14 @@ static rpmRC buildSpec(rpmts ts, BTA_t buildArgs, rpmSpec spec, int what)
 	if (!rpmSpecGetSection(spec, RPMBUILD_BUILDREQUIRES) && sourceOnly) {
 		/* don't run prep if not needed for source build */
 		/* with(out) dynamic build requires*/
-	    what &= ~(RPMBUILD_PREP);
+	    what &= ~(RPMBUILD_PREP|RPMBUILD_MKBUILDDIR);
 	}
 
 	if ((what & RPMBUILD_CHECKBUILDREQUIRES) &&
 	    (rc = doCheckBuildRequires(ts, spec, test)))
+		goto exit;
+
+	if ((what & RPMBUILD_MKBUILDDIR) && (rc = doBuildDir(spec, test, sbp)))
 		goto exit;
 
 	if ((what & RPMBUILD_PREP) &&

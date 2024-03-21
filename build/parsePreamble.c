@@ -293,7 +293,9 @@ int addSource(rpmSpec spec, int specline, const char *srcname, rpmTagVal tag)
     }
 
     if (specline) {
-	nonum = parseTagNumber(spec->line + strlen(name), &num);
+	char * s = spec->line;
+	SKIPSPACE(s);
+	nonum = parseTagNumber(s + strlen(name), &num);
 	if (nonum < 0) {
 	    rpmlog(RPMLOG_ERR, _("line %d: Bad %s number: %s\n"),
 		     spec->lineNum, name, spec->line);
@@ -837,11 +839,8 @@ static rpmRC handlePreambleTag(rpmSpec spec, enum parseStages stage,
     switch (tag) {
     case RPMTAG_BUILDSYSTEM:
 	SINGLE_TOKEN_ONLY;
-	if (rpmCharCheck(spec, field,
-			ALLOWED_CHARS_NAME, ALLOWED_FIRSTCHARS_NAME))
-	{
+	if (checkBuildsystem(spec, field))
 	    goto exit;
-	}
 	break;
     case RPMTAG_BUILDOPTION:
 	if (addBuildOption(spec, lang, field))
@@ -1100,10 +1099,10 @@ static struct PreambleRec_s const preambleList[] = {
     {RPMTAG_ICON,		0, 0, 0, 0, LEN_AND_STR("icon")},
     {RPMTAG_PROVIDENAME,	0, 0, 0, 0, LEN_AND_STR("provides")},
     {RPMTAG_REQUIRENAME,	2, 0, 0, 0, LEN_AND_STR("requires")},
-    {RPMTAG_RECOMMENDNAME,	0, 0, 0, 0, LEN_AND_STR("recommends")},
-    {RPMTAG_SUGGESTNAME,	0, 0, 0, 0, LEN_AND_STR("suggests")},
-    {RPMTAG_SUPPLEMENTNAME,	0, 0, 0, 0, LEN_AND_STR("supplements")},
-    {RPMTAG_ENHANCENAME,	0, 0, 0, 0, LEN_AND_STR("enhances")},
+    {RPMTAG_RECOMMENDNAME,	2, 0, 0, 0, LEN_AND_STR("recommends")},
+    {RPMTAG_SUGGESTNAME,	2, 0, 0, 0, LEN_AND_STR("suggests")},
+    {RPMTAG_SUPPLEMENTNAME,	2, 0, 0, 0, LEN_AND_STR("supplements")},
+    {RPMTAG_ENHANCENAME,	2, 0, 0, 0, LEN_AND_STR("enhances")},
     {RPMTAG_PREREQ,		2, 1, 0, 0, LEN_AND_STR("prereq")},
     {RPMTAG_CONFLICTNAME,	0, 0, 0, 0, LEN_AND_STR("conflicts")},
     {RPMTAG_OBSOLETENAME,	0, 0, 0, 0, LEN_AND_STR("obsoletes")},
@@ -1136,10 +1135,11 @@ static struct PreambleRec_s const preambleList[] = {
 static int findPreambleTag(rpmSpec spec, PreambleRec * pr, const char ** macro, char * lang)
 {
     PreambleRec p;
-    char *s;
+    char *s = spec->line;
+    SKIPSPACE(s);
 
     for (p = preambleList; p->token != NULL; p++) {
-	if (!(p->token && !rstrncasecmp(spec->line, p->token, p->len)))
+	if (!(p->token && !rstrncasecmp(s, p->token, p->len)))
 	    continue;
 	if (p->deprecated) {
 	    rpmlog(RPMLOG_WARNING, _("line %d: %s is deprecated: %s\n"),
@@ -1150,7 +1150,7 @@ static int findPreambleTag(rpmSpec spec, PreambleRec * pr, const char ** macro, 
     if (p == NULL || p->token == NULL)
 	return 1;
 
-    s = spec->line + p->len;
+    s = s + p->len;
     SKIPSPACE(s);
 
     switch (p->type) {
@@ -1280,28 +1280,38 @@ int parsePreamble(rpmSpec spec, int initialPackage, enum parseStages stage)
 	}
     }
 
-    /* 
-     * Expand buildroot one more time to get %{version} and the like
-     * from the main package, validate sanity. The spec->buildRoot could
-     * still contain unexpanded macros but it cannot be empty or '/', and it
-     * can't be messed with by anything spec does beyond this point.
-     */
     if (initialPackage) {
 	if (checkForRequiredForBuild(pkg->header)) {
 	    goto exit;
 	}
 
-	char *buildRoot = rpmGetPath(spec->buildRoot, NULL);
-	free(spec->buildRoot);
-	spec->buildRoot = buildRoot;
-	rpmPushMacro(spec->macros, "buildroot", NULL, spec->buildRoot, RMIL_SPEC);
-	if (*buildRoot == '\0') {
-	    rpmlog(RPMLOG_ERR, _("%%{buildroot} couldn't be empty\n"));
-	    goto exit;
-	}
-	if (rstreq(buildRoot, "/")) {
-	    rpmlog(RPMLOG_ERR, _("%%{buildroot} can not be \"/\"\n"));
-	    goto exit;
+	if (!spec->buildDir) {
+	    /* Grab top builddir on first entry as we'll override _builddir */
+	    if (!rpmMacroIsDefined(spec->macros, "_top_builddir")) {
+		char *top_builddir = rpmExpand("%{_builddir}", NULL);
+		rpmPushMacroFlags(spec->macros, "_top_builddir", NULL,
+				top_builddir, RMIL_GLOBAL, RPMMACRO_LITERAL);
+		free(top_builddir);
+	    }
+
+	    /* Using release here causes a buildid no-recompute test to fail */
+	    spec->buildDir = rpmExpand("%{_top_builddir}/%{NAME}-%{VERSION}-%{_arch}", NULL);
+	    /* Override toplevel _builddir for backwards compatibility */
+	    rpmPushMacroFlags(spec->macros, "_builddir", NULL, spec->buildDir,
+				RMIL_SPEC, RPMMACRO_LITERAL);
+
+	    /* A user-oriented, unambiguous name for the thing */
+	    rpmPushMacroFlags(spec->macros, "builddir", NULL, spec->buildDir,
+				RMIL_SPEC, RPMMACRO_LITERAL);
+
+	    spec->buildRoot = rpmGetPath(spec->buildDir, "/BUILDROOT", NULL);
+	    rpmPushMacroFlags(spec->macros, "buildroot", NULL, spec->buildRoot,
+				RMIL_SPEC, RPMMACRO_LITERAL);
+
+	    char *specparts = rpmGetPath(spec->buildDir, "/SPECPARTS", NULL);
+	    rpmPushMacroFlags(spec->macros, "specpartsdir", NULL, specparts,
+				RMIL_SPEC, RPMMACRO_LITERAL);
+	    free(specparts);
 	}
     }
 

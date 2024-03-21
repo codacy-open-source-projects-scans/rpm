@@ -1030,8 +1030,8 @@ rpmFileAction rpmfilesDecideFate(rpmfiles ofi, int oix,
     char buffer[1024];
     rpmFileTypes dbWhat, newWhat, diskWhat;
     struct stat sb;
-    int save = (newFlags & RPMFILE_NOREPLACE) ? FA_ALTNAME : FA_SAVE;
-    int action = FA_CREATE; /* assume we can create */
+    rpmFileAction save = (newFlags & RPMFILE_NOREPLACE) ? FA_ALTNAME : FA_SAVE;
+    rpmFileAction action = FA_CREATE; /* assume we can create */
 
     /* If the new file is a ghost, leave whatever might be on disk alone. */
     if (newFlags & RPMFILE_GHOST) {
@@ -2384,7 +2384,7 @@ int rpmfiArchiveReadToFilePsm(rpmfi fi, FD_t fd, int nodigest, rpmpsm psm)
 
     rpm_loff_t left = rpmfiFSize(fi);
     const unsigned char * fidigest = NULL;
-    rpmHashAlgo digestalgo = 0;
+    int digestalgo = 0;
     int rc = 0;
     char buf[BUFSIZ*4];
 

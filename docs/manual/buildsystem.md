@@ -32,7 +32,7 @@ section with the necessary steps.
 
 2) Another very common need is to pass extra arguments to the build
 commands, build configuration in particular. This is done with the
-BuildOption tag, which can appear arbitrary number of times
+`BuildOption` tag, which can appear arbitrary number of times
 in the spec for each section.
 
 ```
@@ -50,22 +50,13 @@ BuildOption(conf): --enable-fu
 Passing these per-section options to the actual buildsystem of the
 package is the responsibility of the buildsystem specific macros.
 
-3) Complex packages can have things like multiple build systems, in
-which case you might want to invoke the macros manually, eg.
-
-```
-%buildsystem_autotools_build
-cd python
-%buildsystem_python_build
-```
-
 ## Supporting new build systems
 
 Supporting new build system types is just a matter of declaring a few
 macros for the build scriptlet sections relevant to the build system.
 
 Scriptlet                 | Mandatory | Buildsystem macro
--------------------------------------------
+--------------------------|-----------|------------------
 `%prep`                   | No        | `%buildsystem_name_prep`
 `%conf`                   | Yes       | `%buildsystem_name_conf`
 `%generate_buildrequires` | No        | `%buildsystem_name_generate_buildrequires`
@@ -75,7 +66,7 @@ Scriptlet                 | Mandatory | Buildsystem macro
 `%clean`                  | No        | `%buildsystem_name_clean`
 
 Replace "name" with the buildsystem name, eg `%buildsystem_cmake_build`.
-When BuildSystem: tag is set, these automatically populate the corresponding
+When `BuildSystem:` tag is set, these automatically populate the corresponding
 spec section, unless the spec manually overrides it. All buildsystem
 macros are required to be parametric to have enforceable semantics.
 

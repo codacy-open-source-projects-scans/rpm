@@ -69,7 +69,7 @@ static int buildIndexes(rpmdb db)
 
     dbSetFSync(db, 0);
 
-    dbCtrl(db, RPMDB_CTRL_LOCK_RW);
+    dbCtrl(db, DB_CTRL_LOCK_RW);
 
     mi = rpmdbInitIterator(db, RPMDBI_PACKAGES, NULL, 0);
     while ((h = rpmdbNextIterator(mi))) {
@@ -2517,7 +2517,7 @@ exit:
 
 int rpmdbCtrl(rpmdb db, rpmdbCtrlOp ctrl)
 {
-    dbCtrlOp dbctrl = 0;
+    dbCtrlOp dbctrl = DB_CTRL_NONE;
     switch (ctrl) {
     case RPMDB_CTRL_LOCK_RO:
 	dbctrl = DB_CTRL_LOCK_RO;

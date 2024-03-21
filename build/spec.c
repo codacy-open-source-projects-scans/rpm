@@ -234,6 +234,7 @@ rpmSpec newSpec(void)
     spec->sourcePackage = NULL;
     
     spec->buildRoot = NULL;
+    spec->buildDir = NULL;
 
     spec->buildRestrictions = headerNew();
     spec->BANames = NULL;
@@ -260,6 +261,7 @@ rpmSpec rpmSpecFree(rpmSpec spec)
     freeStringBuf(spec->parsed);
 
     spec->buildRoot = _free(spec->buildRoot);
+    spec->buildDir = _free(spec->buildDir);
     spec->specFile = _free(spec->specFile);
 
     closeSpec(spec);
@@ -277,6 +279,10 @@ rpmSpec rpmSpecFree(rpmSpec spec)
     spec->sourcePackage = freePackage(spec->sourcePackage);
 
     spec->buildRestrictions = headerFree(spec->buildRestrictions);
+
+    for (int i = 0; i < NR_SECT; i++) {
+	argvFree(spec->buildopts[i]);
+    }
 
     if (!spec->recursing) {
 	if (spec->BASpecs != NULL)
@@ -298,7 +304,7 @@ rpmSpec rpmSpecFree(rpmSpec spec)
     spec->pool = rpmstrPoolFree(spec->pool);
 
     spec->buildHost = _free(spec->buildHost);
-    
+
     spec = _free(spec);
 
     return spec;
