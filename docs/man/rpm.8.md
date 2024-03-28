@@ -150,37 +150,17 @@ These options can be used in all the different modes.
 
 **\--rcfile ***FILELIST*
 
-:   Replace the list of configuration files to be read. Each of the
-    files in the colon separated *FILELIST* is read sequentially by
-    **rpm** for configuration information. Only the first file in the
-    list must exist, and tildes will be expanded to the value of
-    **\$HOME**. The default *FILELIST* is
-    */usr/lib/rpm/rpmrc*:*/usr/lib/rpm/redhat/rpmrc*:*/etc/rpmrc*:*\~/.rpmrc*.
-
-```{=html}
-<!-- -->
-```
+:   Replace the default list of configuration files to be read with *FILELIST*.
+    See **rpmrc Configuration** for details.
 
 **\--load ***FILE*
 
 :   Load an individual macro file.
 
-```{=html}
-<!-- -->
-```
-
 **\--macros ***FILELIST*
 
-:   Replace the list of macro files to be loaded. Each of the files in
-    the colon separated *FILELIST* is read sequentially by **rpm** for
-    macro definitions. Only the first file in the list must exist, and
-    tildes will be expanded to the value of **\$HOME**. The default
-    *FILELIST* is
-    */usr/lib/rpm/macros*:*/usr/lib/rpm/macros.d/macros.\**:*/usr/lib/rpm/platform/%{\_target}/macros*:*/usr/lib/rpm/fileattrs/\*.attr*:*/usr/lib/rpm/redhat/macros*:*/etc/rpm/macros.\**:*/etc/rpm/macros*:*/etc/rpm/%{\_target}/macros*:*\~/.rpmmacros*
-
-```{=html}
-<!-- -->
-```
+:   Replace the list of macro files to be loaded with *FILELIST*.
+    See **Macro Configuration** for details.
 
 **\--pipe ***CMD*
 
@@ -1038,40 +1018,57 @@ FILES
 rpmrc Configuration
 -------------------
 
-    /usr/lib/rpm/rpmrc
-    /usr/lib/rpm/<vendor>/rpmrc
-    /etc/rpmrc
-    ~/.rpmrc
+Each file in the colon separated rpmrc path is read sequentially by
+**rpm** for configuration information. Only the first file in the
+list must exist, and tildes will be expanded to the value of
+**\$HOME**. The default rpmrc path is as follows:
+
+    /usr/lib/rpm/rpmrc:
+    /usr/lib/rpm/<vendor>/rpmrc:
+    /etc/rpmrc:
+    ~/.config/rpm/rpmrc
+
+If **XDG_CONFIG_HOME** environment variable is set, it replaces ~/.config
+in the path.
+
+In older rpm versions the path of per-user rpmrc was ~/.rpmrc.
+This is still processed if it exists and the new configuration directory
+does not exist.
 
 Macro Configuration
 -------------------
 
-    /usr/lib/rpm/macros
-    /usr/lib/rpm/<vendor>/macros
-    /etc/rpm/macros
-    ~/.rpmmacros
+Each file or **glob(7)** pattern in the colon-separated macro path is
+read sequentially by **rpm** for macro definitions. Tildes will be expanded
+to the value of the environment variable *HOME*. The default macro path
+is as follows:
+
+    /usr/lib/rpm/macros:
+    /usr/lib/rpm/macros.d/macros.*:
+    /usr/lib/rpm/platform/%{_target}/macros:
+    /usr/lib/rpm/fileattrs/*.attr:
+    /usr/lib/rpm/<vendor>/macros:
+    /etc/rpm/macros.*:
+    /etc/rpm/macros:
+    /etc/rpm/%{_target}/macros:
+    ~/.config/rpm/macros
+
+If **XDG_CONFIG_HOME** environment variable is set, it replaces ~/.config
+in the path.
+
+In older versions of rpm, the path of per-user macros was ~/.rpmmacros.
+This is still processed if it exists and the new configuration directory
+does not exist.
 
 Database
 --------
 
-    /var/lib/rpm/Basenames
-    /var/lib/rpm/Conflictname
-    /var/lib/rpm/Dirnames
-    /var/lib/rpm/Group
-    /var/lib/rpm/Installtid
-    /var/lib/rpm/Name
-    /var/lib/rpm/Obsoletename
-    /var/lib/rpm/Packages
-    /var/lib/rpm/Providename
-    /var/lib/rpm/Requirename
-    /var/lib/rpm/Sha1header
-    /var/lib/rpm/Sigmd5
-    /var/lib/rpm/Triggername
+    /var/lib/rpm/
 
 Temporary
 ---------
 
-*/var/tmp/rpm\**
+    /var/tmp/rpm*
 
 SEE ALSO
 ========
