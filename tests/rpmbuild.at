@@ -67,6 +67,28 @@ runroot rpm -qpl --noartifact /build/RPMS/*/amhello-1.0-1.*.rpm
 [ignore])
 
 RPMTEST_CHECK([
+# re-tar the source to a different name
+tar xf /data/SOURCES/amhello-1.0.tar.gz
+mv amhello-1.0 amhello-1.0-prerelease
+tar czf "${RPMTEST}"/tmp/amhello-pre.tgz amhello-1.0-prerelease/
+runroot rpmbuild -bb \
+	--define "_prefix /usr" \
+	--define "_docdir_fmt %%{NAME}" \
+	--define "_sourcedir /tmp" \
+	--define "srcname amhello-pre.tgz" \
+	--quiet /data/SPECS/amhello.spec
+
+runroot rpm -qpl --noartifact /build/RPMS/*/amhello-1.0-1.*.rpm
+],
+[0],
+[/usr/bin/hello
+/usr/share/doc/amhello
+/usr/share/doc/amhello/README
+/usr/share/doc/amhello/README.distro
+],
+[ignore])
+
+RPMTEST_CHECK([
 runroot rpmbuild -bb \
 	--define "_prefix /usr" \
 	--define "_docdir_fmt %%{NAME}" \
@@ -91,7 +113,7 @@ runroot rpmbuild -bb \
 ],
 [1],
 [],
-[error: line 10: Unknown buildsystem: bogons
+[error: line 11: Unknown buildsystem: bogons
 ])
 
 RPMTEST_CLEANUP
@@ -183,7 +205,6 @@ Executing(%conf)
 Executing(%build)
 Executing(%install)
 Executing(%check)
-Executing(%clean)
 Executing(rmbuild)
 ],
 [])
@@ -199,7 +220,6 @@ Executing(%conf)
 Executing(%build)
 Executing(%install)
 Executing(%check)
-Executing(%clean)
 Executing(rmbuild)
 ],
 [])
@@ -585,7 +605,7 @@ runroot \
   rpmbuild \
   -bb --quiet \
   --define "use_source_date_epoch_as_buildtime 1" \
-  --define "clamp_mtime_to_source_date_epoch 1" \
+  --define "build_mtime_policy clamp_to_source_date_epoch" \
   /data/SPECS/attrtest.spec
 
 RPMTEST_CHECK([[
@@ -656,7 +676,7 @@ runroot \
   rpmbuild \
   -bb --quiet \
   --define "use_source_date_epoch_as_buildtime 1" \
-  --define "clamp_mtime_to_source_date_epoch 1" \
+  --define "build_mtime_policy clamp_to_source_date_epoch" \
   /data/SPECS/source_date_epoch.spec
 
 runroot rpm -q --dump /build/RPMS/noarch/test-1-1.noarch.rpm
@@ -677,13 +697,35 @@ runroot \
   rpmbuild \
   -bb --quiet \
   --define "use_source_date_epoch_as_buildtime 1" \
-  --define "clamp_mtime_to_source_date_epoch 1" \
+  --define "build_mtime_policy clamp_to_source_date_epoch" \
   /data/SPECS/source_date_epoch.spec
 
 runroot rpm -q --dump /build/RPMS/noarch/test-1-1.noarch.rpm
 ],
 [0],
 [/0.txt 15 0 91751cee0a1ab8414400238a761411daa29643ab4b8243e9a91649e25be53ada 0100644 root root 0 0 0 X
+],
+[])
+RPMTEST_CLEANUP
+
+AT_SETUP([rpmbuild _buildtime macro])
+AT_KEYWORDS([build])
+RPMTEST_CHECK([
+RPMDB_INIT
+
+runroot \
+  rpmbuild \
+  -bb --quiet \
+  --define "_buildtime 1699460418" \
+  --define "build_mtime_policy clamp_to_buildtime" \
+  /data/SPECS/source_date_epoch.spec
+
+runroot rpm -q --dump /build/RPMS/noarch/test-1-1.noarch.rpm
+runroot rpm -q --qf '%{BUILDTIME}\n' /build/RPMS/noarch/test-1-1.noarch.rpm
+],
+[0],
+[/0.txt 15 1699460418 91751cee0a1ab8414400238a761411daa29643ab4b8243e9a91649e25be53ada 0100644 root root 0 0 0 X
+1699460418
 ],
 [])
 RPMTEST_CLEANUP
@@ -2932,6 +2974,22 @@ RPMDB_INIT
 
 RPMTEST_CHECK([
 runroot rpmbuild --quiet -bb /data/SPECS/bpf.spec
+],
+[0],
+[],
+[])
+RPMTEST_CLEANUP
+
+# XXX this always succeeds when rpmbuild is run as root so the test is
+# kinda meaningless until #3005 is done, but works as a manual reproducer.
+AT_SETUP([rpmbuild non-removable file in builddir])
+AT_KEYWORDS([build])
+RPMDB_INIT
+
+# -bi doesn't run cleanup, test that we manage that situation too
+RPMTEST_CHECK([
+runroot rpmbuild --quiet -bi /data/SPECS/noperms.spec
+runroot rpmbuild --quiet -bb /data/SPECS/noperms.spec
 ],
 [0],
 [],

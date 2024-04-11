@@ -14,7 +14,14 @@
 
 int headerIsSource(Header h)
 {
-    return (!headerIsEntry(h, RPMTAG_SOURCERPM));
+    /* Positive identification of a source package */
+    if (headerIsEntry(h, RPMTAG_SOURCEPACKAGE))
+	return 1;
+    /* Positive identification of a binary package */
+    if (headerIsEntry(h, RPMTAG_SOURCERPM))
+	return 0;
+    /* Dunno, guess so (as per traditional behavior) */
+    return 1;
 }
 
 Header headerCopy(Header h)
@@ -193,8 +200,8 @@ int headerPutBin(Header h, rpmTagVal tag, const uint8_t *val, rpm_count_t size)
 
 static int dncmp(const void * a, const void * b)
 {
-    const char *const * first = a;
-    const char *const * second = b;
+    const char *const * first = (const char *const *)a;
+    const char *const * second = (const char *const *)b;
     return strcmp(*first, *second);
 }
 
@@ -225,9 +232,9 @@ static void compressFilelist(Header h)
     if (count < 1) 
 	return;
 
-    dirNames = xmalloc(sizeof(*dirNames) * count);	/* worst case */
-    baseNames = xmalloc(sizeof(*dirNames) * count);
-    dirIndexes = xmalloc(sizeof(*dirIndexes) * count);
+    dirNames = (char **)xmalloc(sizeof(*dirNames) * count);	/* worst case */
+    baseNames = (const char **)xmalloc(sizeof(*dirNames) * count);
+    dirIndexes = (uint32_t *)xmalloc(sizeof(*dirIndexes) * count);
 
     /* HACK. Source RPM, so just do things differently */
     {	const char *fn = rpmtdGetString(&fileNames);
@@ -269,8 +276,8 @@ static void compressFilelist(Header h)
 	savechar = *baseName;
 	*baseName = '\0';
 	if (dirIndex < 0 ||
-	    (needle = bsearch(&filename, dirNames, dirIndex + 1, sizeof(dirNames[0]), dncmp)) == NULL) {
-	    char *s = xmalloc(len + 1);
+	    (needle = (char **)bsearch(&filename, dirNames, dirIndex + 1, sizeof(dirNames[0]), dncmp)) == NULL) {
+	    char *s = (char *)xmalloc(len + 1);
 	    rstrlcpy(s, filename, len + 1);
 	    dirIndexes[realCount] = ++dirIndex;
 	    dirNames[dirIndex] = s;

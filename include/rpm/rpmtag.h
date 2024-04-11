@@ -23,6 +23,7 @@ extern "C" {
 #define	HEADER_REGIONS		64
 #define HEADER_I18NTABLE	100
 #define	HEADER_SIGBASE		256
+#define HEADER_SIGTOP		999
 #define	HEADER_TAGBASE		1000
 
 /** \ingroup rpmtag
@@ -67,6 +68,7 @@ typedef enum rpmTag_e {
     /* RPMTAG_SIG_BASE+19 reserved for RPMSIGTAG_FILESIGNATURELENGTH */
     RPMTAG_VERITYSIGNATURES	= RPMTAG_SIG_BASE+20,	/* s[] */
     RPMTAG_VERITYSIGNATUREALGO	= RPMTAG_SIG_BASE+21,	/* i */
+    RPMTAG_SIG_TOP		= HEADER_SIGTOP,
 
     RPMTAG_NAME  		= 1000,	/* s */
 #define	RPMTAG_N	RPMTAG_NAME	/* s */
@@ -388,6 +390,9 @@ typedef enum rpmTag_e {
     RPMTAG_SYSUSERS		= 5109, /* s[] extension */
     RPMTAG_BUILDSYSTEM		= 5110, /* internal */
     RPMTAG_BUILDOPTION		= 5111, /* internal */
+    RPMTAG_PAYLOADSIZE		= 5112, /* l */
+    RPMTAG_PAYLOADSIZEALT	= 5113, /* l */
+    RPMTAG_RPMFORMAT		= 5114, /* i */
 
     RPMTAG_FIRSTFREE_TAG	/*!< internal */
 } rpmTag;
@@ -447,13 +452,14 @@ typedef enum rpmSigTag_e {
     RPMSIGTAG_FILESIGNATURELENGTH	= RPMTAG_SIG_BASE + 19,
     RPMSIGTAG_VERITYSIGNATURES		= RPMTAG_VERITYSIGNATURES,
     RPMSIGTAG_VERITYSIGNATUREALGO	= RPMTAG_VERITYSIGNATUREALGO,
+    RPMSIGTAG_RESERVED			= RPMTAG_SIG_TOP,
 } rpmSigTag;
 
 
 /** \ingroup header
  * The basic types of data in tags from headers.
  */
-typedef enum rpmTagType_e {
+enum rpmTagType_e {
 #define	RPM_MIN_TYPE		1
     RPM_NULL_TYPE		=  0,
     RPM_CHAR_TYPE		=  1,
@@ -468,7 +474,8 @@ typedef enum rpmTagType_e {
 #define	RPM_MAX_TYPE		9
 #define RPM_FORCEFREE_TYPE	0xff
 #define RPM_MASK_TYPE		0x0000ffff
-} rpmTagType;
+};
+typedef rpmFlags rpmTagType;
 
 /** \ingroup rpmtag
  * The classes of data in tags from headers.

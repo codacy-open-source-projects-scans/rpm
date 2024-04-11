@@ -25,13 +25,22 @@
 static rpm_time_t getBuildTime(void)
 {
     rpm_time_t buildTime = 0;
+    char *btMacro;
     char *srcdate;
     time_t epoch;
     char *endptr;
     char *timestr = NULL;
 
-    srcdate = getenv("SOURCE_DATE_EPOCH");
-    if (srcdate && rpmExpandNumeric("%{?use_source_date_epoch_as_buildtime}")) {
+    btMacro = rpmExpand("%{?_buildtime}", NULL);
+    if (*btMacro) {
+        errno = 0;
+        epoch = strtol(btMacro, &endptr, 10);
+        if (btMacro == endptr || *endptr || errno != 0)
+            rpmlog(RPMLOG_ERR, _("unable to parse _buildtime macro\n"));
+	else
+            buildTime = (uint32_t) epoch;
+    } else if ((srcdate = getenv("SOURCE_DATE_EPOCH")) != NULL &&
+	    rpmExpandNumeric("%{?use_source_date_epoch_as_buildtime}")) {
         errno = 0;
         epoch = strtol(srcdate, &endptr, 10);
         if (srcdate == endptr || *endptr || errno != 0)
@@ -40,6 +49,7 @@ static rpm_time_t getBuildTime(void)
             buildTime = (uint32_t) epoch;
     } else
         buildTime = (uint32_t) time(NULL);
+    free(btMacro);
 
     rasprintf(&timestr, "%u", buildTime);
     setenv("RPM_BUILD_TIME", timestr, 1);
@@ -57,7 +67,7 @@ static char * buildHost(void)
     if (strcmp(bhMacro, "") != 0) {
         rasprintf(&hostname, "%s", bhMacro);
     } else {
-	hostname = rcalloc(NI_MAXHOST + 1, sizeof(*hostname));
+	hostname = (char *)rcalloc(NI_MAXHOST + 1, sizeof(*hostname));
 	if (gethostname(hostname, NI_MAXHOST) == 0) {
 	    struct addrinfo *ai, hints;
 	    memset(&hints, 0, sizeof(hints));
@@ -203,7 +213,11 @@ rpmRC doScript(rpmSpec spec, rpmBuildFlags what, const char *name,
 	fprintf(fp, "cd '%s'\n", buildSubdir);
 
     if (what == RPMBUILD_RMBUILD) {
+	char *fix = rpmExpand("%{_fixperms}", NULL);
+	fprintf(fp, "test -d '%s' && %s '%s'\n",
+			spec->buildDir, fix, spec->buildDir);
 	fprintf(fp, "rm -rf '%s'\n", spec->buildDir);
+	free(fix);
     } else if (sb != NULL)
 	fprintf(fp, "%s", sb);
 
@@ -307,7 +321,10 @@ static int doCheckBuildRequires(rpmts ts, rpmSpec spec, int test)
 
 static rpmRC doBuildDir(rpmSpec spec, int test, StringBuf *sbp)
 {
+    char *fix = rpmExpand("%{_fixperms}", NULL);
     char *doDir = rstrscat(NULL,
+			   "test -d '", spec->buildDir, "' && ",
+			   fix, " '", spec->buildDir, "'\n",
 			   "rm -rf '", spec->buildDir, "'\n",
 			   "mkdir -p '", spec->buildDir, "'\n",
 			   NULL);
@@ -320,6 +337,7 @@ static rpmRC doBuildDir(rpmSpec spec, int test, StringBuf *sbp)
 		spec->buildDir, strerror(errno));
     }
     free(doDir);
+    free(fix);
     return rc;
 }
 
@@ -418,6 +436,7 @@ static int buildSpec(rpmts ts, BTA_t buildArgs, rpmSpec spec, int what)
 		!(spec->flags & RPMSPEC_FORCE)) {
 		/* Create buildreqs package */
 		char *nvr = headerGetAsString(spec->packages->header, RPMTAG_NVR);
+		free(spec->sourceRpmName);
 		rasprintf(&spec->sourceRpmName, "%s.buildreqs.nosrc.rpm", nvr);
 		free(nvr);
 		/* free sources to not include them in the buildreqs package */

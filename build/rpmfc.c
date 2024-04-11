@@ -144,7 +144,7 @@ static char *rpmfcAttrMacroV(const char *arg, va_list args)
     }
     blen += sizeof("}") - 1;
 
-    buf = xmalloc(blen + 1);
+    buf = (char *)xmalloc(blen + 1);
 
     pe = buf;
     pe = stpcpy(pe, "%{?_");
@@ -183,7 +183,7 @@ static regex_t *rpmfcAttrReg(const char *arg, ...)
     pattern = rpmfcAttrMacroV(arg, args);
     va_end(args);
     if (pattern) {
-	reg = xcalloc(1, sizeof(*reg));
+	reg = (regex_t *)xcalloc(1, sizeof(*reg));
 	if (regcomp(reg, pattern, REG_EXTENDED) != 0) { 
 	    rpmlog(RPMLOG_WARNING, _("Ignoring invalid regex %s\n"), pattern);
 	    reg = _free(reg);
@@ -195,7 +195,7 @@ static regex_t *rpmfcAttrReg(const char *arg, ...)
 
 static rpmfcAttr rpmfcAttrNew(const char *name)
 {
-    rpmfcAttr attr = xcalloc(1, sizeof(*attr));
+    rpmfcAttr attr = (rpmfcAttr)xcalloc(1, sizeof(*attr));
     struct matchRule *rules[] = { &attr->incl, &attr->excl, NULL };
 
     attr->name = xstrdup(name);
@@ -261,12 +261,12 @@ static int rpmfcExpandAppend(ARGV_t * argvp, ARGV_const_t av)
 }
 
 static rpmds rpmdsSingleNS(rpmstrPool pool,
-			rpmTagVal tagN, const char *namespace,
+			rpmTagVal tagN, const char *namespc,
 			const char * N, const char * EVR, rpmsenseFlags Flags)
 {
     rpmds ds = NULL;
-    if (namespace) {
-	char *NSN = rpmExpand(namespace, "(", N, ")", NULL);
+    if (namespc) {
+	char *NSN = rpmExpand(namespc, "(", N, ")", NULL);
 	ds = rpmdsSinglePool(pool, tagN, NSN, EVR, Flags);
 	free(NSN);
     } else {
@@ -295,7 +295,7 @@ static int getOutputFrom(ARGV_t argv,
 	return -1;
     }
     
-    void *oldhandler = signal(SIGPIPE, SIG_IGN);
+    sighandler_t oldhandler = signal(SIGPIPE, SIG_IGN);
 
     child = fork();
     if (child < 0) {
@@ -594,7 +594,7 @@ static ARGV_t runCall(const char *name, const char *buildRoot, ARGV_t fns)
 
 struct addReqProvDataFc {
     rpmfc fc;
-    const char *namespace;
+    const char *namespc;
     regex_t *exclude;
 };
 
@@ -602,12 +602,12 @@ static rpmRC addReqProvFc(void *cbdata, rpmTagVal tagN,
 			  const char * N, const char * EVR, rpmsenseFlags Flags,
 			  int index)
 {
-    struct addReqProvDataFc *data = cbdata;
+    struct addReqProvDataFc *data = (struct addReqProvDataFc *)cbdata;
     rpmfc fc = data->fc;
-    const char *namespace = data->namespace;
+    const char *namespc = data->namespc;
     regex_t *exclude = data->exclude;
 
-    rpmds ds = rpmdsSingleNS(fc->pool, tagN, namespace, N, EVR, Flags);
+    rpmds ds = rpmdsSingleNS(fc->pool, tagN, namespc, N, EVR, Flags);
     /* Add to package and file dependencies unless filtered */
     if (regMatch(exclude, rpmdsDNEVR(ds)+2) == 0)
 	rpmfcAddFileDep(&fc->fileDeps, ds, index);
@@ -683,11 +683,11 @@ static int genDeps(const char *mname, int multifile, rpmTagVal tagN,
 static int rpmfcHelper(rpmfc fc, int *ixs, int n, const char *proto,
 		       const struct exclreg_s *excl,
 		       rpmsenseFlags dsContext, rpmTagVal tagN,
-		       const char *namespace, const char *mname)
+		       const char *namespc, const char *mname)
 {
     int rc = 0;
-    const char **paths = xcalloc(n + 1, sizeof(*paths));
-    int *fnx = xmalloc(n * sizeof(*fnx));
+    const char **paths = (const char **)xcalloc(n + 1, sizeof(*paths));
+    int *fnx = (int *)xmalloc(n * sizeof(*fnx));
     int nfn = 0;
 
     for (int i = 0; i < n; i++) {
@@ -708,7 +708,7 @@ static int rpmfcHelper(rpmfc fc, int *ixs, int n, const char *proto,
 
     struct addReqProvDataFc data;
     data.fc = fc;
-    data.namespace = namespace;
+    data.namespc = namespc;
     data.exclude = excl->exclude;
 
     if (proto && rstreq(proto, "multifile")) {
@@ -945,15 +945,15 @@ rpmfc rpmfcFree(rpmfc fc)
 
 rpmfc rpmfcCreate(const char *buildRoot, rpmFlags flags)
 {
-    rpmfc fc = xcalloc(1, sizeof(*fc));
+    rpmfc fc = (rpmfc)xcalloc(1, sizeof(*fc));
     if (buildRoot) {
 	fc->buildRoot = xstrdup(buildRoot);
 	fc->brlen = strlen(buildRoot);
     }
     fc->pool = rpmstrPoolCreate();
-    fc->pkg = xcalloc(1, sizeof(*fc->pkg));
+    fc->pkg = (Package)xcalloc(1, sizeof(*fc->pkg));
     fc->fileDeps.alloced = 10;
-    fc->fileDeps.data = xmalloc(fc->fileDeps.alloced *
+    fc->fileDeps.data = (rpmfcFileDep *)xmalloc(fc->fileDeps.alloced *
 	sizeof(fc->fileDeps.data[0]));
     return fc;
 }
@@ -1040,7 +1040,7 @@ static int cmpIndexDeps(const void *a, const void *b)
 static void rpmfcNormalizeFDeps(rpmfc fc)
 {
     rpmstrPool versionedDeps = rpmstrPoolCreate();
-    rpmfcFileDep *normalizedFDeps = xmalloc(fc->fileDeps.size *
+    rpmfcFileDep *normalizedFDeps = (rpmfcFileDep *)xmalloc(fc->fileDeps.size *
 	sizeof(normalizedFDeps[0]));
     int ix = 0;
     char *depStr;
@@ -1116,7 +1116,7 @@ static int applyAttr(rpmfc fc, int aix,
 	char *mname = rstrscat(NULL, "__", aname, "_", dep->name, NULL);
 
 	if (rpmMacroIsDefined(NULL, mname)) {
-	    char *ns = rpmfcAttrMacro(aname, "namespace", NULL);
+	    char *ns = rpmfcAttrMacro(aname, "namespc", NULL);
 	    rc = rpmfcHelper(fc, ixs, n, attr->proto,
 			    excl, dep->type, dep->tag, ns, mname);
 	    free(ns);
@@ -1219,7 +1219,7 @@ static int initAttrs(rpmfc fc)
 
     /* Initialize attr objects */
     nattrs = argvCount(all_attrs);
-    fc->atypes = xcalloc(nattrs + 1, sizeof(*fc->atypes));
+    fc->atypes = (rpmfcAttr*)xcalloc(nattrs + 1, sizeof(*fc->atypes));
 
     for (int i = 0; i < nattrs; i++) {
 	fc->atypes[i] = rpmfcAttrNew(all_attrs[i]);
@@ -1306,11 +1306,11 @@ rpmRC rpmfcClassify(rpmfc fc, ARGV_t argv, rpm_mode_t * fmode)
     }
 
     fc->nfiles = argvCount(argv);
-    fc->fn = xcalloc(fc->nfiles, sizeof(*fc->fn));
-    fc->ftype = xcalloc(fc->nfiles, sizeof(*fc->ftype));
-    fc->fattrs = xcalloc(fc->nfiles, sizeof(*fc->fattrs));
-    fc->fcolor = xcalloc(fc->nfiles, sizeof(*fc->fcolor));
-    fc->fcdictx = xcalloc(fc->nfiles, sizeof(*fc->fcdictx));
+    fc->fn = (char **)xcalloc(fc->nfiles, sizeof(*fc->fn));
+    fc->ftype = (char **)xcalloc(fc->nfiles, sizeof(*fc->ftype));
+    fc->fattrs = (ARGV_t *)xcalloc(fc->nfiles, sizeof(*fc->fattrs));
+    fc->fcolor = (rpm_color_t *)xcalloc(fc->nfiles, sizeof(*fc->fcolor));
+    fc->fcdictx = (rpmsid *)xcalloc(fc->nfiles, sizeof(*fc->fcdictx));
     fc->fahash = fattrHashCreate(fc->nfiles / 3, intId, intCmp, NULL, NULL);
 
     /* Initialize the per-file dictionary indices. */
@@ -1463,7 +1463,7 @@ typedef struct DepMsg_s * DepMsg_t;
 
 struct DepMsg_s {
     const char * msg;
-    char * const argv[4];
+    const char * argv[4];
     rpmTagVal ntag;
     rpmTagVal vtag;
     rpmTagVal ftag;
@@ -1479,37 +1479,37 @@ static struct DepMsg_s depMsgs[] = {
 	RPMTAG_REQUIRENAME, RPMTAG_REQUIREVERSION, RPMTAG_REQUIREFLAGS,
 	RPMSENSE_INTERP, 0 },
   { "Requires(rpmlib)",	{ NULL, "rpmlib", NULL, NULL },
-	-1, -1, RPMTAG_REQUIREFLAGS,
+	0, 0, RPMTAG_REQUIREFLAGS,
 	RPMSENSE_RPMLIB, 0 },
   { "Requires(verify)",	{ NULL, "verify", NULL, NULL },
-	-1, -1, RPMTAG_REQUIREFLAGS,
+	0, 0, RPMTAG_REQUIREFLAGS,
 	RPMSENSE_SCRIPT_VERIFY, 0 },
   { "Requires(pre)",	{ NULL, "pre", NULL, NULL },
-	-1, -1, RPMTAG_REQUIREFLAGS,
+	0, 0, RPMTAG_REQUIREFLAGS,
 	RPMSENSE_SCRIPT_PRE, 0 },
   { "Requires(post)",	{ NULL, "post", NULL, NULL },
-	-1, -1, RPMTAG_REQUIREFLAGS,
+	0, 0, RPMTAG_REQUIREFLAGS,
 	RPMSENSE_SCRIPT_POST, 0 },
   { "Requires(preun)",	{ NULL, "preun", NULL, NULL },
-	-1, -1, RPMTAG_REQUIREFLAGS,
+	0, 0, RPMTAG_REQUIREFLAGS,
 	RPMSENSE_SCRIPT_PREUN, 0 },
   { "Requires(postun)",	{ NULL, "postun", NULL, NULL },
-	-1, -1, RPMTAG_REQUIREFLAGS,
+	0, 0, RPMTAG_REQUIREFLAGS,
 	RPMSENSE_SCRIPT_POSTUN, 0 },
   { "Requires(pretrans)",	{ NULL, "pretrans", NULL, NULL },
-	-1, -1, RPMTAG_REQUIREFLAGS,
+	0, 0, RPMTAG_REQUIREFLAGS,
 	RPMSENSE_PRETRANS, 0 },
   { "Requires(posttrans)",	{ NULL, "posttrans", NULL, NULL },
-	-1, -1, RPMTAG_REQUIREFLAGS,
+	0, 0, RPMTAG_REQUIREFLAGS,
 	RPMSENSE_POSTTRANS, 0 },
   { "Requires(preuntrans)",	{ NULL, "preuntrans", NULL, NULL },
-	-1, -1, RPMTAG_REQUIREFLAGS,
+	0, 0, RPMTAG_REQUIREFLAGS,
 	RPMSENSE_PREUNTRANS, 0 },
   { "Requires(postuntrans)",	{ NULL, "postuntrans", NULL, NULL },
-	-1, -1, RPMTAG_REQUIREFLAGS,
+	0, 0, RPMTAG_REQUIREFLAGS,
 	RPMSENSE_POSTUNTRANS, 0 },
   { "Requires",		{ "%{?__find_requires}", NULL, NULL, NULL },
-	-1, -1, RPMTAG_REQUIREFLAGS,	/* XXX inherit name/version arrays */
+	0, 0, RPMTAG_REQUIREFLAGS,	/* XXX inherit name/version arrays */
 	RPMSENSE_FIND_REQUIRES|RPMSENSE_TRIGGERIN|RPMSENSE_TRIGGERUN|RPMSENSE_TRIGGERPOSTUN|RPMSENSE_TRIGGERPREIN, 0 },
   { "Conflicts",	{ "%{?__find_conflicts}", NULL, NULL, NULL },
 	RPMTAG_CONFLICTNAME, RPMTAG_CONFLICTVERSION, RPMTAG_CONFLICTFLAGS,
@@ -1546,7 +1546,7 @@ static void printDeps(rpmfc fc)
     int bingo = 0;
 
     for (dm = DepMsgs; dm->msg != NULL; dm++) {
-	if (dm->ntag != -1) {
+	if (dm->ntag) {
 	    ds = rpmfcDependencies(fc, dm->ntag);
 	}
 	if (dm->ftag == 0)
@@ -1619,7 +1619,7 @@ static rpmRC rpmfcApplyExternal(rpmfc fc)
 	rpmlog(RPMLOG_NOTICE, _("Finding  %s: %s\n"), dm->msg, s);
 	free(s);
 
-	if (rpmfcExec(dm->argv, sb_stdin, &sb_stdout,
+	if (rpmfcExec((ARGV_const_t)dm->argv, sb_stdin, &sb_stdout,
 			failnonzero, fc->buildRoot) == -1)
 	    continue;
 
@@ -1630,7 +1630,7 @@ static rpmRC rpmfcApplyExternal(rpmfc fc)
 	}
 
 	/* Parse dependencies into header */
-	rc = parseRCPOT(NULL, fc->pkg, getStringBuf(sb_stdout), dm->ntag != -1 ? dm->ntag : RPMTAG_REQUIRENAME, 0, tagflags, addReqProvPkg, NULL);
+	rc = parseRCPOT(NULL, fc->pkg, getStringBuf(sb_stdout), dm->ntag ? dm->ntag : RPMTAG_REQUIRENAME, 0, tagflags, addReqProvPkg, NULL);
 	freeStringBuf(sb_stdout);
 
 	if (rc) {
@@ -1701,7 +1701,7 @@ rpmRC rpmfcGenerateDepends(const rpmSpec spec, Package pkg)
 	goto exit;
 
     /* Extract absolute file paths in argv format. */
-    fmode = xcalloc(ac+1, sizeof(*fmode));
+    fmode = (rpm_mode_t *)xcalloc(ac+1, sizeof(*fmode));
 
     fc = rpmfcCreate(spec->buildRoot, 0);
     freePackage(fc->pkg);

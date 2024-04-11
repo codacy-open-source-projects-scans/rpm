@@ -21,7 +21,6 @@
 #include "debug.h"
 
 typedef struct FDSTACK_s * FDSTACK_t;
-typedef const struct FDIO_s * FDIO_t;
 
 struct FDSTACK_s {
     FDIO_t		io;
@@ -77,7 +76,7 @@ static void fdSetFdno(FD_t fd, int fdno)
 
 static void fdPush(FD_t fd, FDIO_t io, void * fp, int fdno)
 {
-    FDSTACK_t fps = xcalloc(1, sizeof(*fps));
+    FDSTACK_t fps = (FDSTACK_t) xcalloc(1, sizeof(*fps));
     fps->io = io;
     fps->fp = fp;
     fps->fdno = fdno;
@@ -143,21 +142,6 @@ struct FDIO_s {
   fdio_ferror_function_t	_ferror;
   fdio_fstrerr_function_t	_fstrerr;
 };
-
-/* forward refs */
-static const FDIO_t fdio;
-static const FDIO_t ufdio;
-static const FDIO_t gzdio;
-#ifdef HAVE_BZLIB_H
-static const FDIO_t bzdio;
-#endif
-#ifdef HAVE_LZMA_H
-static const FDIO_t xzdio;
-static const FDIO_t lzdio;
-#endif
-#ifdef HAVE_ZSTD
-static const FDIO_t zstdio;
-#endif
 
 /** \ingroup rpmio
  * Update digest(s) attached to fd.
@@ -351,12 +335,12 @@ FD_t fdFree( FD_t fd)
 
 static FD_t fdNew(int fdno, const char *descr)
 {
-    FD_t fd = xcalloc(1, sizeof(*fd));
+    FD_t fd = (FD_t)xcalloc(1, sizeof(*fd));
     fd->nrefs = 0;
     fd->flags = 0;
     fd->magic = FDMAGIC;
     fd->urlType = URL_IS_UNKNOWN;
-    fd->stats = xcalloc(1, sizeof(*fd->stats));
+    fd->stats = (FDSTAT_t)xcalloc(1, sizeof(*fd->stats));
     fd->digests = NULL;
     fd->descr = descr ? xstrdup(descr) : NULL;
 
@@ -420,7 +404,7 @@ static const struct FDIO_s fdio_s = {
   fdRead, fdWrite, fdSeek, fdClose,
   fdOpen, NULL, fdFlush, fdTell, fdError, fdStrerr,
 };
-static const FDIO_t fdio = &fdio_s ;
+const FDIO_t fdio = &fdio_s ;
 
 off_t ufdCopy(FD_t sfd, FD_t tfd)
 {
@@ -542,11 +526,15 @@ static const struct FDIO_s ufdio_s = {
   fdRead, fdWrite, fdSeek, fdClose,
   ufdOpen, NULL, fdFlush, fdTell, fdError, fdStrerr
 };
-static const FDIO_t ufdio = &ufdio_s ;
+const FDIO_t ufdio = &ufdio_s ;
 
 /* =============================================================== */
 /* Support for GZIP library.  */
 #include <zlib.h>
+static gzFile gzdFp(FDSTACK_t fps)
+{
+    return (gzFile)fps->fp;
+}
 
 static FD_t gzdFdopen(FD_t fd, int fdno, const char *fmode)
 {
@@ -562,14 +550,14 @@ static FD_t gzdFdopen(FD_t fd, int fdno, const char *fmode)
 
 static int gzdFlush(FDSTACK_t fps)
 {
-    gzFile gzfile = fps->fp;
+    gzFile gzfile = gzdFp(fps);
     if (gzfile == NULL) return -2;
     return gzflush(gzfile, Z_SYNC_FLUSH);	/* XXX W2DO? */
 }
 
 static void gzdSetError(FDSTACK_t fps)
 {
-    gzFile gzfile = fps->fp;
+    gzFile gzfile = gzdFp(fps);
     int zerror = 0;
     fps->errcookie = gzerror(gzfile, &zerror);
     if (zerror == Z_ERRNO) {
@@ -580,7 +568,7 @@ static void gzdSetError(FDSTACK_t fps)
 
 static ssize_t gzdRead(FDSTACK_t fps, void * buf, size_t count)
 {
-    gzFile gzfile = fps->fp;
+    gzFile gzfile = gzdFp(fps);
     ssize_t rc;
 
     if (gzfile == NULL) return -2;	/* XXX can't happen */
@@ -596,7 +584,7 @@ static ssize_t gzdWrite(FDSTACK_t fps, const void * buf, size_t count)
     gzFile gzfile;
     ssize_t rc;
 
-    gzfile = fps->fp;
+    gzfile = gzdFp(fps);
     if (gzfile == NULL) return -2;	/* XXX can't happen */
 
     rc = gzwrite(gzfile, (void *)buf, count);
@@ -609,7 +597,7 @@ static int gzdSeek(FDSTACK_t fps, off_t pos, int whence)
 {
     off_t p = pos;
     int rc;
-    gzFile gzfile = fps->fp;
+    gzFile gzfile = gzdFp(fps);
 
     if (gzfile == NULL) return -2;	/* XXX can't happen */
 
@@ -621,7 +609,7 @@ static int gzdSeek(FDSTACK_t fps, off_t pos, int whence)
 
 static int gzdClose(FDSTACK_t fps)
 {
-    gzFile gzfile = fps->fp;
+    gzFile gzfile = gzdFp(fps);
     int rc;
 
     if (gzfile == NULL) return -2;	/* XXX can't happen */
@@ -634,7 +622,7 @@ static int gzdClose(FDSTACK_t fps)
 static off_t gzdTell(FDSTACK_t fps)
 {
     off_t pos = -1;
-    gzFile gzfile = fps->fp;
+    gzFile gzfile = gzdFp(fps);
 
     if (gzfile != NULL) {
 #ifdef HAVE_GZSEEK
@@ -652,13 +640,18 @@ static const struct FDIO_s gzdio_s = {
   gzdRead, gzdWrite, gzdSeek, gzdClose,
   NULL, gzdFdopen, gzdFlush, gzdTell, zfdError, zfdStrerr
 };
-static const FDIO_t gzdio = &gzdio_s ;
+const FDIO_t gzdio = &gzdio_s ;
 
 /* =============================================================== */
 /* Support for BZIP2 library.  */
 #ifdef HAVE_BZLIB_H
 
 #include <bzlib.h>
+
+static BZFILE *bzdFp(FDSTACK_t fps)
+{
+    return (BZFILE *)fps->fp;
+}
 
 static FD_t bzdFdopen(FD_t fd, int fdno, const char * fmode)
 {
@@ -674,12 +667,12 @@ static FD_t bzdFdopen(FD_t fd, int fdno, const char * fmode)
 
 static int bzdFlush(FDSTACK_t fps)
 {
-    return BZ2_bzflush(fps->fp);
+    return BZ2_bzflush(bzdFp(fps));
 }
 
 static ssize_t bzdRead(FDSTACK_t fps, void * buf, size_t count)
 {
-    BZFILE *bzfile = fps->fp;
+    BZFILE *bzfile = bzdFp(fps);
     ssize_t rc = 0;
 
     if (bzfile)
@@ -695,7 +688,7 @@ static ssize_t bzdRead(FDSTACK_t fps, void * buf, size_t count)
 
 static ssize_t bzdWrite(FDSTACK_t fps, const void * buf, size_t count)
 {
-    BZFILE *bzfile = fps->fp;
+    BZFILE *bzfile = bzdFp(fps);
     ssize_t rc;
 
     rc = BZ2_bzwrite(bzfile, (void *)buf, count);
@@ -708,7 +701,7 @@ static ssize_t bzdWrite(FDSTACK_t fps, const void * buf, size_t count)
 
 static int bzdClose(FDSTACK_t fps)
 {
-    BZFILE *bzfile = fps->fp;
+    BZFILE *bzfile = bzdFp(fps);
 
     if (bzfile == NULL) return -2;
 
@@ -723,7 +716,7 @@ static const struct FDIO_s bzdio_s = {
   bzdRead, bzdWrite, NULL, bzdClose,
   NULL, bzdFdopen, bzdFlush, NULL, zfdError, zfdStrerr
 };
-static const FDIO_t bzdio = &bzdio_s ;
+const FDIO_t bzdio = &bzdio_s ;
 
 #endif	/* HAVE_BZLIB_H */
 
@@ -753,14 +746,14 @@ typedef struct lzfile {
 
 static LZFILE *lzopen_internal(const char *mode, int fd, int xz)
 {
-    int level = LZMA_PRESET_DEFAULT;
+    unsigned int level = LZMA_PRESET_DEFAULT;
     int encoding = 0;
     FILE *fp;
     LZFILE *lzfile;
     lzma_ret ret;
     lzma_stream init_strm = LZMA_STREAM_INIT;
     uint64_t mem_limit = rpmExpandNumeric("%{_xz_memlimit}");
-    int threads = 0;
+    unsigned int threads = 0;
 
     for (; *mode; mode++) {
 	if (*mode == 'w')
@@ -778,7 +771,7 @@ static LZFILE *lzopen_internal(const char *mode, int fd, int xz)
     fp = fdopen(fd, encoding ? "w" : "r");
     if (!fp)
 	return NULL;
-    lzfile = calloc(1, sizeof(*lzfile));
+    lzfile = (LZFILE *)calloc(1, sizeof(*lzfile));
     lzfile->file = fp;
     lzfile->encoding = encoding;
     lzfile->eof = 0;
@@ -865,7 +858,7 @@ static ssize_t lzread(LZFILE *lzfile, void *buf, size_t len)
       return -1;
     if (lzfile->eof)
       return 0;
-    lzfile->strm.next_out = buf;
+    lzfile->strm.next_out = (uint8_t *)buf;
     lzfile->strm.avail_out = len;
     for (;;) {
 	if (!lzfile->strm.avail_in) {
@@ -896,7 +889,7 @@ static ssize_t lzwrite(LZFILE *lzfile, void *buf, size_t len)
 	return -1;
     if (!len)
 	return 0;
-    lzfile->strm.next_in = buf;
+    lzfile->strm.next_in = (uint8_t *)buf;
     lzfile->strm.avail_in = len;
     for (;;) {
 	lzfile->strm.next_out = lzfile->buf;
@@ -924,6 +917,11 @@ static FD_t xzdFdopen(FD_t fd, int fdno, const char * fmode)
     return fd;
 }
 
+static LZFILE *lzdFp(FDSTACK_t fps)
+{
+    return (LZFILE*)fps->fp;
+}
+
 static FD_t lzdFdopen(FD_t fd, int fdno, const char * fmode)
 {
     LZFILE *lzfile = lzopen_internal(fmode, fdno, 0);
@@ -938,13 +936,13 @@ static FD_t lzdFdopen(FD_t fd, int fdno, const char * fmode)
 
 static int lzdFlush(FDSTACK_t fps)
 {
-    LZFILE *lzfile = fps->fp;
+    LZFILE *lzfile = lzdFp(fps);
     return fflush(lzfile->file);
 }
 
 static ssize_t lzdRead(FDSTACK_t fps, void * buf, size_t count)
 {
-    LZFILE *lzfile = fps->fp;
+    LZFILE *lzfile = lzdFp(fps);
     ssize_t rc = 0;
 
     if (lzfile)
@@ -957,7 +955,7 @@ static ssize_t lzdRead(FDSTACK_t fps, void * buf, size_t count)
 
 static ssize_t lzdWrite(FDSTACK_t fps, const void * buf, size_t count)
 {
-    LZFILE *lzfile = fps->fp;
+    LZFILE *lzfile = lzdFp(fps);
     ssize_t rc = 0;
 
     rc = lzwrite(lzfile, (void *)buf, count);
@@ -969,7 +967,7 @@ static ssize_t lzdWrite(FDSTACK_t fps, const void * buf, size_t count)
 
 static int lzdClose(FDSTACK_t fps)
 {
-    LZFILE *lzfile = fps->fp;
+    LZFILE *lzfile = lzdFp(fps);
     int rc;
 
     if (lzfile == NULL) return -2;
@@ -983,14 +981,14 @@ static struct FDIO_s xzdio_s = {
   lzdRead, lzdWrite, NULL, lzdClose,
   NULL, xzdFdopen, lzdFlush, NULL, zfdError, zfdStrerr
 };
-static const FDIO_t xzdio = &xzdio_s;
+const FDIO_t xzdio = &xzdio_s;
 
 static struct FDIO_s lzdio_s = {
   "lzdio", "lzma",
   lzdRead, lzdWrite, NULL, lzdClose,
   NULL, lzdFdopen, lzdFlush, NULL, zfdError, zfdStrerr
 };
-static const FDIO_t lzdio = &lzdio_s;
+const FDIO_t lzdio = &lzdio_s;
 
 #endif	/* HAVE_LZMA_H */
 
@@ -1005,7 +1003,10 @@ typedef struct rpmzstd_s {
     int fdno;
     int level;			/*!< compression level */
     FILE * fp;
-    void * _stream;             /*!< ZSTD_{C,D}Stream */
+    union {
+	ZSTD_DStream *d;
+	ZSTD_CStream *c;
+    } stream;
     size_t nb;
     void * b;
     ZSTD_inBuffer zib;          /*!< ZSTD_inBuffer */
@@ -1014,6 +1015,7 @@ typedef struct rpmzstd_s {
 
 static rpmzstd rpmzstdNew(int fdno, const char *fmode)
 {
+    rpmzstd zstd = NULL;
     int flags = 0;
     int level = 3;
     const char * s = fmode;
@@ -1094,54 +1096,57 @@ static rpmzstd rpmzstdNew(int fdno, const char *fmode)
     if (fp == NULL)
 	return NULL;
 
-    void * _stream = NULL;
+    zstd = (rpmzstd) xcalloc(1, sizeof(*zstd));
     size_t nb = 0;
 
     if ((flags & O_ACCMODE) == O_RDONLY) {	/* decompressing */
-	if ((_stream = (void *) ZSTD_createDStream()) == NULL
-	 || ZSTD_isError(ZSTD_initDStream(_stream))) {
+	if ((zstd->stream.d = ZSTD_createDStream()) == NULL
+	 || ZSTD_isError(ZSTD_initDStream(zstd->stream.d))) {
 	    goto err;
 	}
 	nb = ZSTD_DStreamInSize();
     } else {					/* compressing */
-	if ((_stream = (void *) ZSTD_createCCtx()) == NULL
-	 || ZSTD_isError(ZSTD_CCtx_setParameter(_stream, ZSTD_c_compressionLevel, level))) {
+	if ((zstd->stream.c = ZSTD_createCCtx()) == NULL
+	 || ZSTD_isError(ZSTD_CCtx_setParameter(zstd->stream.c, ZSTD_c_compressionLevel, level))) {
 	    goto err;
 	}
 
 	if (longdist) {
-	    if (ZSTD_isError(ZSTD_CCtx_setParameter(_stream, ZSTD_c_enableLongDistanceMatching, longdist))
-	     || ZSTD_isError(ZSTD_CCtx_setParameter(_stream, ZSTD_c_windowLog, windowlog))) {
+	    if (ZSTD_isError(ZSTD_CCtx_setParameter(zstd->stream.c, ZSTD_c_enableLongDistanceMatching, longdist))
+	     || ZSTD_isError(ZSTD_CCtx_setParameter(zstd->stream.c, ZSTD_c_windowLog, windowlog))) {
 	        goto err;
 	    }
 	}
 
 	if (threads > 0) {
-	    if (ZSTD_isError (ZSTD_CCtx_setParameter(_stream, ZSTD_c_nbWorkers, threads)))
+	    if (ZSTD_isError (ZSTD_CCtx_setParameter(zstd->stream.c, ZSTD_c_nbWorkers, threads)))
 		rpmlog(RPMLOG_DEBUG, "zstd library does not support multi-threading\n");
 	}
 
 	nb = ZSTD_CStreamOutSize();
     }
 
-    rpmzstd zstd = (rpmzstd) xcalloc(1, sizeof(*zstd));
     zstd->flags = flags;
     zstd->fdno = fdno;
     zstd->level = level;
     zstd->fp = fp;
-    zstd->_stream = _stream;
     zstd->nb = nb;
-    zstd->b = xmalloc(nb);
+    zstd->b = (uint8_t *)xmalloc(nb);
 
     return zstd;
 
 err:
     fclose(fp);
     if ((flags & O_ACCMODE) == O_RDONLY)
-	ZSTD_freeDStream(_stream);
+	ZSTD_freeDStream(zstd->stream.d);
     else
-	ZSTD_freeCCtx(_stream);
+	ZSTD_freeCCtx(zstd->stream.c);
     return NULL;
+}
+
+static rpmzstd zstdFp(FDSTACK_t fps)
+{
+    return (rpmzstd)fps->fp;
 }
 
 static FD_t zstdFdopen(FD_t fd, int fdno, const char * fmode)
@@ -1158,7 +1163,7 @@ static FD_t zstdFdopen(FD_t fd, int fdno, const char * fmode)
 
 static int zstdFlush(FDSTACK_t fps)
 {
-    rpmzstd zstd = (rpmzstd) fps->fp;
+    rpmzstd zstd = zstdFp(fps);
 assert(zstd);
     int rc = -1;
 
@@ -1172,7 +1177,7 @@ assert(zstd);
 	  zstd->zob.dst  = zstd->b;
 	  zstd->zob.size = zstd->nb;
 	  zstd->zob.pos  = 0;
-	  xx = ZSTD_compressStream2(zstd->_stream, &zstd->zob, &zib, ZSTD_e_flush);
+	  xx = ZSTD_compressStream2(zstd->stream.c, &zstd->zob, &zib, ZSTD_e_flush);
 	  if (ZSTD_isError(xx)) {
 	      fps->errcookie = ZSTD_getErrorName(xx);
 	      break;
@@ -1190,7 +1195,7 @@ assert(zstd);
 
 static ssize_t zstdRead(FDSTACK_t fps, void * buf, size_t count)
 {
-    rpmzstd zstd = (rpmzstd) fps->fp;
+    rpmzstd zstd = zstdFp(fps);
 assert(zstd);
     ZSTD_outBuffer zob = { buf, count, 0 };
 
@@ -1205,7 +1210,7 @@ assert(zstd);
 	}
 
 	/* Decompress next chunk. */
-	int xx = ZSTD_decompressStream(zstd->_stream, &zob, &zstd->zib);
+	int xx = ZSTD_decompressStream(zstd->stream.d, &zob, &zstd->zib);
 	if (ZSTD_isError(xx)) {
 	    fps->errcookie = ZSTD_getErrorName(xx);
 	    return -1;
@@ -1216,7 +1221,7 @@ assert(zstd);
 
 static ssize_t zstdWrite(FDSTACK_t fps, const void * buf, size_t count)
 {
-    rpmzstd zstd = (rpmzstd) fps->fp;
+    rpmzstd zstd = zstdFp(fps);
 assert(zstd);
     ZSTD_inBuffer zib = { buf, count, 0 };
 
@@ -1228,7 +1233,7 @@ assert(zstd);
 	zstd->zob.pos  = 0;
 
 	/* Compress next chunk. */
-	int xx = ZSTD_compressStream2(zstd->_stream, &zstd->zob, &zib, ZSTD_e_continue);
+	int xx = ZSTD_compressStream2(zstd->stream.c, &zstd->zob, &zib, ZSTD_e_continue);
 	if (ZSTD_isError(xx)) {
 	    fps->errcookie = ZSTD_getErrorName(xx);
 	    return -1;
@@ -1248,13 +1253,13 @@ assert(zstd);
 
 static int zstdClose(FDSTACK_t fps)
 {
-    rpmzstd zstd = (rpmzstd) fps->fp;
+    rpmzstd zstd = zstdFp(fps);
 assert(zstd);
     int rc = -2;
 
     if ((zstd->flags & O_ACCMODE) == O_RDONLY) { /* decompressing */
 	rc = 0;
-	ZSTD_freeDStream(zstd->_stream);
+	ZSTD_freeDStream(zstd->stream.d);
     } else {					/* compressing */
 	/* close frame */
 	int xx;
@@ -1263,7 +1268,7 @@ assert(zstd);
 	  zstd->zob.dst  = zstd->b;
 	  zstd->zob.size = zstd->nb;
 	  zstd->zob.pos  = 0;
-	  xx = ZSTD_compressStream2(zstd->_stream, &zstd->zob, &zib, ZSTD_e_end);
+	  xx = ZSTD_compressStream2(zstd->stream.c, &zstd->zob, &zib, ZSTD_e_end);
 	  if (ZSTD_isError(xx)) {
 	      fps->errcookie = ZSTD_getErrorName(xx);
 	      break;
@@ -1275,7 +1280,7 @@ assert(zstd);
 	  else
 	      rc = 0;
 	} while (xx != 0);
-	ZSTD_freeCCtx(zstd->_stream);
+	ZSTD_freeCCtx(zstd->stream.c);
     }
 
     if (zstd->fp && fileno(zstd->fp) > 2)
@@ -1292,7 +1297,7 @@ static const struct FDIO_s zstdio_s = {
   zstdRead, zstdWrite, NULL, zstdClose,
   NULL, zstdFdopen, zstdFlush, NULL, zfdError, zfdStrerr
 };
-static const FDIO_t zstdio = &zstdio_s ;
+const FDIO_t zstdio = &zstdio_s ;
 
 #endif	/* HAVE_ZSTD */
 
@@ -1695,7 +1700,7 @@ int rpmioSlurp(const char * fn, uint8_t ** bp, ssize_t * blenp)
     blen = (size >= 0 ? size : blenmax);
     if (blen) {
 	int nb;
-	b = xmalloc(blen+1);
+	b = (uint8_t *)xmalloc(blen+1);
 	b[0] = '\0';
 	nb = Fread(b, sizeof(*b), blen, fd);
 	if (Ferror(fd) || (size > 0 && nb != blen)) {

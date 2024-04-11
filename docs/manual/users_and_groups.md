@@ -31,6 +31,9 @@ packaged sysusers.d files create provides for the users and/or groups they
 create. This ensures correct installation when a package relies
 on user/group from another package.
 
+Explict group membership (m) will also create a dependency on both the user
+and the group name.
+
 By default the dependencies are hard requirements, but as this can be
 problematic when upgrading an existing distribution to rpm 4.19, it's possible
 to weaken these into recommends-dependencies by setting 
@@ -38,9 +41,10 @@ to weaken these into recommends-dependencies by setting
 
 ## Limitations
 
-At this time, rpm only supports the `u` and `g` directives of sysusers.d
-format and ignores others. If other directives are needed, the package
-will need to call systemd-sysusers with the correct arguments manually.
+At this time, rpm only supports the `u`, `g` and (since RPM 4.20) `m`
+directives of sysusers.d format and ignores others. If other
+directives are needed, the package will need to call systemd-sysusers
+with the correct arguments manually.
 
 ## Technical details
 
@@ -69,13 +73,32 @@ As systemd-sysusers implicitly creates a matching group for any created
 users, the group provide does not have an EVR here, only explicitly
 created groups will have the encoded sysusers.d line as EVR.
 
+Lines adding users to groups like
+
+```
+m klangd klong
+```
+
+will create a provide:
+```
+groupmember(klangd/klong) = bSBrbGFuZ2Qga2xvbmcA
+```
+but also create two requires (or recommends if the `_use_weak_usergroup_deps` is set to 1):
+
+```
+group(klong)
+user(klangd)
+```
+
+to make sure the packages creating the user and the group are install first.
+
 # Implementation
 
 RPM by default does not actually use `systemd-sysusers`, but has its
 own shell script (`sysusers.sh`) that calls `useradd` and `groupadd`.
 The program to call can be configured with the `%__systemd_sysusers`
 macro. It is possible to point it to the `systemd-sysusers` utility,
-but that may be undesired as it introduces a dependency to the RPM.
+but it may be undesired to add this as a dependency to RPM.
 `systemd-sysusers` is normally installed as part of the main `systemd`
 package, but in installations (for example containers) where `systemd`
 is not needed, the smaller `systemd-standalone-sysusers` package which
@@ -83,9 +106,8 @@ does not pull in the rest of systemd may be used.
 
 On systems that do neither have `useradd` and `groupadd` nor one of
 the systemd packages, a custom script or program can be used. Such a
-script needs to read sysusers.d lines from the standard input and
-interpret these into calls native user and group creation tools as
-appropriate. The script needs to handle `--root <path>` argument for
-chroot installations - the script runs *from outside* of any possible
-chroot, and care must be taken to avoid changing the host in such a
-case.
+script needs to read sysusers.d lines from the standard input and then
+call the native user and group creation tools as appropriate. The
+script needs to handle `--root <path>` argument for chroot
+installations - the script runs *from outside* of any possible chroot,
+and care must be taken to avoid changing the host in such a case.

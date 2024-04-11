@@ -21,8 +21,6 @@
 
 #include "debug.h"
 
-#define RPM_ANY_CLASS 255
-
 typedef char * (*headerTagFormatFunction) (rpmtd td, char **emsg);
 
 /** \ingroup header
@@ -32,13 +30,13 @@ typedef char * (*headerTagFormatFunction) (rpmtd td, char **emsg);
 struct headerFmt_s {
     rpmtdFormats fmt;	/*!< Value of extension */
     const char *name;	/*!< Name of extension. */
-    rpmTagClass class;	/*!< Class of source data (RPM_ANY_CLASS for any) */
+    rpmTagClass tclass;	/*!< Class of source data (RPM_NULL_CLASS for any) */
     headerTagFormatFunction func;	/*!< Pointer to formatter function. */	
 };
 
-static const char *classEr(rpmTagClass class)
+static const char *classEr(rpmTagClass tclass)
 {
-    switch (class) {
+    switch (tclass) {
     case RPM_BINARY_CLASS:	 return _("(not a blob)");
     case RPM_NUMERIC_CLASS:	 return _("(not a number)");
     case RPM_STRING_CLASS:	 return _("(not a string)");
@@ -63,7 +61,7 @@ static char * stringFormat(rpmtd td, char **emsg)
 	    break;
 	}
 	case RPM_BINARY_CLASS:
-	    val = rpmhex(td->data, td->count);
+	    val = rpmhex((uint8_t *)td->data, td->count);
 	    break;
 	default:
 	    *emsg = xstrdup("(unknown type)");
@@ -232,7 +230,7 @@ static char * armorFormat(rpmtd td, char **emsg)
 
     switch (rpmtdType(td)) {
     case RPM_BIN_TYPE:
-	s = td->data;
+	s = (const unsigned char *)td->data;
 	/* XXX HACK ALERT: element field abused as no. bytes of binary data. */
 	ns = td->count;
 	atype = PGPARMOR_SIGNATURE;	/* XXX check pkt for signature */
@@ -420,7 +418,7 @@ static char * pgpsigFormat(rpmtd td, char **emsg)
     char * val = NULL;
     pgpDigParams sigp = NULL;
 
-    if (pgpPrtParams(td->data, td->count, PGPTAG_SIGNATURE, &sigp)) {
+    if (pgpPrtParams((uint8_t*)td->data, td->count, PGPTAG_SIGNATURE, &sigp)) {
 	*emsg = xstrdup(_("(not an OpenPGP signature)"));
     } else {
 	char dbuf[BUFSIZ];
@@ -452,7 +450,7 @@ static char * depflagsFormat(rpmtd td, char **emsg)
 {
     char * val = NULL;
     uint64_t anint = rpmtdGetNumber(td);
-    val = xcalloc(4, 1);
+    val = (char *)xcalloc(4, 1);
 
     if (anint & RPMSENSE_LESS)
 	strcat(val, "<");
@@ -477,7 +475,7 @@ static char * fstateFormat(rpmtd td, char **emsg)
 {
     char * val = NULL;
     const char * str;
-    rpmfileState fstate = rpmtdGetNumber(td);
+    rpmfileState fstate = (rpmfileState)rpmtdGetNumber(td);
     switch (fstate) {
     case RPMFILE_STATE_NORMAL:
 	str = _("normal");
@@ -571,9 +569,9 @@ static char *tagnumFormat(rpmtd td, char **emsg)
 
 static const struct headerFmt_s rpmHeaderFormats[] = {
     { RPMTD_FORMAT_STRING,	"string",
-	RPM_ANY_CLASS,		stringFormat },
+	RPM_NULL_CLASS,		stringFormat },
     { RPMTD_FORMAT_ARMOR,	"armor",
-	RPM_ANY_CLASS,		armorFormat },
+	RPM_NULL_CLASS,		armorFormat },
     { RPMTD_FORMAT_BASE64,	"base64",
 	RPM_BINARY_CLASS,	base64Format },
     { RPMTD_FORMAT_PGPSIG,	"pgpsig",
@@ -591,7 +589,7 @@ static const struct headerFmt_s rpmHeaderFormats[] = {
     { RPMTD_FORMAT_TRIGGERTYPE,	"triggertype",
 	RPM_NUMERIC_CLASS,	triggertypeFormat },
     { RPMTD_FORMAT_XML,		"xml",
-	RPM_ANY_CLASS,		xmlFormat },
+	RPM_NULL_CLASS,		xmlFormat },
     { RPMTD_FORMAT_OCTAL,	"octal",
 	RPM_NUMERIC_CLASS,	octalFormat },
     { RPMTD_FORMAT_HEX,		"hex",
@@ -601,9 +599,9 @@ static const struct headerFmt_s rpmHeaderFormats[] = {
     { RPMTD_FORMAT_DAY,		"day",
 	RPM_NUMERIC_CLASS,	dayFormat },
     { RPMTD_FORMAT_SHESCAPE,	"shescape",
-	RPM_ANY_CLASS,		shescapeFormat },
+	RPM_NULL_CLASS,		shescapeFormat },
     { RPMTD_FORMAT_ARRAYSIZE,	"arraysize",
-	RPM_ANY_CLASS,		arraysizeFormat },
+	RPM_NULL_CLASS,		arraysizeFormat },
     { RPMTD_FORMAT_FSTATE,	"fstate",
 	RPM_NUMERIC_CLASS,	fstateFormat },
     { RPMTD_FORMAT_VFLAGS,	"vflags",
@@ -617,12 +615,12 @@ static const struct headerFmt_s rpmHeaderFormats[] = {
     { RPMTD_FORMAT_HUMANIEC,	"humaniec",
 	RPM_NUMERIC_CLASS,	humaniecFormat },
     { RPMTD_FORMAT_TAGNAME,	"tagname",
-	RPM_ANY_CLASS,		tagnameFormat },
+	RPM_NULL_CLASS,		tagnameFormat },
     { RPMTD_FORMAT_TAGNUM,	"tagnum",
-	RPM_ANY_CLASS,		tagnumFormat },
+	RPM_NULL_CLASS,		tagnumFormat },
     { RPMTD_FORMAT_JSON,	"json",
-	RPM_ANY_CLASS,		jsonFormat },
-    { -1,			NULL, 		0,	NULL }
+	RPM_NULL_CLASS,		jsonFormat },
+    { RPMTD_FORMAT_STRING,	NULL, 		RPM_NULL_CLASS,	NULL }
 };
 
 headerFmt rpmHeaderFormatByName(const char *fmt)
@@ -652,8 +650,8 @@ char *rpmHeaderFormatCall(headerFmt fmt, rpmtd td)
     char *ret = NULL;
     char *err = NULL;
 
-    if (fmt->class != RPM_ANY_CLASS && rpmtdClass(td) != fmt->class)
-	err = xstrdup(classEr(fmt->class));
+    if (fmt->tclass != RPM_NULL_CLASS && rpmtdClass(td) != fmt->tclass)
+	err = xstrdup(classEr(fmt->tclass));
     else
 	ret = fmt->func(td, &err);
 

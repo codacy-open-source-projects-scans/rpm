@@ -11,6 +11,10 @@
 #include <fcntl.h>
 #ifdef WITH_FSVERITY
 #include <libfsverity.h>
+#include "rpmsignverity.h"
+#endif
+#ifdef WITH_IMAEVM
+#include "rpmsignfiles.h"
 #endif
 
 #include <rpm/rpmlib.h>			/* RPMSIGTAG & related */
@@ -25,8 +29,6 @@
 #include "rpmlead.h"
 #include "signature.h"
 #include "rpmvs.h"
-#include "rpmsignfiles.h"
-#include "rpmsignverity.h"
 
 #include "debug.h"
 
@@ -318,7 +320,7 @@ static rpmtd makeGPGSignature(Header sigh, int ishdr, sigTarget sigt)
 
     pktlen = st.st_size;
     rpmlog(RPMLOG_DEBUG, "GPG sig size: %zd\n", pktlen);
-    pkt = xmalloc(pktlen);
+    pkt = (uint8_t *)xmalloc(pktlen);
 
     {	FD_t fd;
 
@@ -373,9 +375,9 @@ static int haveSignature(rpmtd sigtd, Header h)
     if (!headerGet(h, rpmtdTag(sigtd), &oldtd, HEADERGET_DEFAULT))
 	return rc;
 
-    pgpPrtParams(sigtd->data, sigtd->count, PGPTAG_SIGNATURE, &sig1);
+    pgpPrtParams((uint8_t *)sigtd->data, sigtd->count, PGPTAG_SIGNATURE, &sig1);
     while (rpmtdNext(&oldtd) >= 0 && rc == 0) {
-	pgpPrtParams(oldtd.data, oldtd.count, PGPTAG_SIGNATURE, &sig2);
+	pgpPrtParams((uint8_t *)oldtd.data, oldtd.count, PGPTAG_SIGNATURE, &sig2);
 	if (pgpDigParamsCmp(sig1, sig2) == 0)
 	    rc = 1;
 	sig2 = pgpDigParamsFree(sig2);
@@ -515,7 +517,7 @@ static rpmRC includeVeritySignatures(FD_t fd, Header *sigp, Header *hdrp)
 
 static int msgCb(struct rpmsinfo_s *sinfo, void *cbdata)
 {
-    char **msg = cbdata;
+    char **msg = (char **)cbdata;
     if (sinfo->rc && *msg == NULL)
 	*msg = rpmsinfoMsg(sinfo);
     return (sinfo->rc != RPMRC_FAIL);
@@ -565,6 +567,7 @@ static int rpmSign(const char *rpm, int deleting, int flags)
     struct sigTarget_s sigt_v4;
     unsigned int origSigSize;
     int insSig = 0;
+    rpmTagVal reserveTag = RPMSIGTAG_RESERVEDSPACE;
 
     fprintf(stdout, "%s:\n", rpm);
 
@@ -650,15 +653,19 @@ static int rpmSign(const char *rpm, int deleting, int flags)
 	res = -1;
     }
 
+    /* Only v6 packages have this */
+    if (headerIsEntry(h, RPMSIGTAG_RESERVED))
+	reserveTag = RPMSIGTAG_RESERVED;
+
     /* Adjust reserved size for added/removed signatures */
-    if (headerGet(sigh, RPMSIGTAG_RESERVEDSPACE, &utd, HEADERGET_MINMEM)) {
+    if (headerGet(sigh, reserveTag, &utd, HEADERGET_MINMEM)) {
 	int diff = headerSizeof(sigh, HEADER_MAGIC_YES) - origSigSize;
 
 	/* diff can be zero if nothing was added or removed */
 	if (diff) {
 	    utd.count -= diff;
 	    if (utd.count > 0 && utd.count < origSigSize) {
-		char *zeros = xcalloc(utd.count, sizeof(*zeros));
+		uint8_t *zeros = (uint8_t *)xcalloc(utd.count, sizeof(*zeros));
 		utd.data = zeros;
 		headerMod(sigh, &utd);
 		insSig = 1;

@@ -26,7 +26,7 @@ target_sources(librpm PRIVATE
 	backend/dbiset.c backend/dbiset.h
 	headerutil.c header.c headerfmt.c header_internal.h
 	rpmdb.c rpmdb_internal.h
-	fprint.c fprint.h tagname.c rpmtd.c tagtbl.C
+	fprint.c fprint.h tagname.c rpmtd.c tagtbl.inc
 	cpio.c cpio.h depends.c order.c formats.c tagexts.c fsm.c fsm.h
 	manifest.c manifest.h package.c
 	poptALL.c poptI.c poptQV.c psm.c query.c
@@ -57,6 +57,22 @@ if(ENABLE_NDB)
 	)
 endif()
 
+# sources converted to c++ so far (avoid having to do everything at once)
+set (cxx_sources
+	cpio.c depends.c formats.c fprint.c fsm.c header.c
+	headerfmt.c headerutil.c manifest.c order.c package.c
+	poptALL.c poptI.c poptQV.c psm.c
+	query.c relocation.c rpmal.c rpmchecksig.c rpmchroot.c
+	rpmdb.c rpmds.c rpmfi.c rpmfs.c rpmgi.c rpminstall.c
+	rpmlead.c rpmlock.c rpmplugins.c rpmprob.c rpmps.c
+	rpmrc.c rpmscript.c rpmtd.c rpmte.c rpmtriggers.c
+	rpmts.c rpmug.c rpmvs.c signature.c tagexts.c tagname.c
+	transaction.c verify.c
+	backend/dbi.c backend/dbiset.c backend/bdb_ro.c
+	backend/dummydb.c backend/sqlite.c backend/ndb/glue.c
+)
+set_source_files_properties(${cxx_sources} PROPERTIES LANGUAGE CXX)
+
 if(ENABLE_BDB_RO)
 	target_sources(librpm PRIVATE backend/bdb_ro.c)
 endif()
@@ -69,8 +85,8 @@ if(WITH_CAP)
 	target_link_libraries(librpm PRIVATE PkgConfig::LIBCAP)
 endif()
 
-add_custom_command(OUTPUT tagtbl.C
-	COMMAND AWK=${AWK} ${CMAKE_CURRENT_SOURCE_DIR}/gentagtbl.sh ${CMAKE_SOURCE_DIR}/include/rpm/rpmtag.h > tagtbl.C
+add_custom_command(OUTPUT tagtbl.inc
+	COMMAND AWK=${AWK} ${CMAKE_CURRENT_SOURCE_DIR}/gentagtbl.sh ${CMAKE_SOURCE_DIR}/include/rpm/rpmtag.h > tagtbl.inc
 	DEPENDS ${CMAKE_SOURCE_DIR}/include/rpm/rpmtag.h gentagtbl.sh
 )
 

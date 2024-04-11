@@ -190,14 +190,15 @@ rpmdbMatchIterator rpmtsInitIterator(const rpmts ts, rpmDbiTagVal rpmtag,
 	loadKeyring(ts);
 
     /* Parse out "N(EVR)" tokens from a label key if present */
-    if (rpmtag == RPMDBI_LABEL && keyp != NULL && strchr(keyp, '(')) {
-	const char *se, *s = keyp;
+    const char *s = (const char *)keyp;
+    if (rpmtag == RPMDBI_LABEL && keyp != NULL && strchr(s, '(')) {
+	const char *se;
 	char *t;
 	size_t slen = strlen(s);
 	int level = 0;
 	int c;
 
-	tmp = xmalloc(slen+1);
+	tmp = (char *)xmalloc(slen+1);
 	keyp = t = tmp;
 	while ((c = *s++) != '\0') {
 	    switch (c) {
@@ -616,9 +617,9 @@ rpmRC rpmtsImportPubkey(const rpmts ts, const unsigned char * pkt, size_t pktlen
     if (txn == NULL)
 	return rc;
 
-    krc = pgpPubKeyLint(pkt, pktlen, &lints);
+    rc = pgpPubKeyLint(pkt, pktlen, &lints);
     if (lints) {
-        if (krc != RPMRC_OK) {
+        if (rc != RPMRC_OK) {
             rpmlog(RPMLOG_ERR, "%s\n", lints);
         } else {
 	    /* XXX Hack to ease testing between different backends */
@@ -627,8 +628,7 @@ rpmRC rpmtsImportPubkey(const rpmts ts, const unsigned char * pkt, size_t pktlen
         }
         free(lints);
     }
-    if (krc != RPMRC_OK) {
-        rc = krc;
+    if (rc != RPMRC_OK) {
         goto exit;
     }
 
@@ -1190,11 +1190,10 @@ static int vfylevel_init(void)
 
 rpmts rpmtsCreate(void)
 {
-    rpmts ts;
+    rpmts ts = (rpmts)xcalloc(1, sizeof(*ts));
     tsMembers tsmem;
     char *source_date_epoch = NULL;
 
-    ts = xcalloc(1, sizeof(*ts));
     memset(&ts->ops, 0, sizeof(ts->ops));
     (void) rpmswEnter(rpmtsOp(ts, RPMTS_OP_TOTAL), -1);
     ts->dsi = NULL;
@@ -1242,7 +1241,7 @@ rpmts rpmtsCreate(void)
 	free(tmp);
     }
 
-    tsmem = xcalloc(1, sizeof(*ts->members));
+    tsmem = (tsMembers)xcalloc(1, sizeof(*ts->members));
     tsmem->pool = NULL;
     tsmem->delta = 5;
     tsmem->addedPackages = NULL;
@@ -1298,7 +1297,7 @@ rpmtsi rpmtsiInit(rpmts ts)
 {
     rpmtsi tsi = NULL;
 
-    tsi = xcalloc(1, sizeof(*tsi));
+    tsi = (rpmtsi)xcalloc(1, sizeof(*tsi));
     tsi->ts = rpmtsLink(ts);
     tsi->oc = 0;
     return tsi;
@@ -1365,7 +1364,7 @@ rpmtxn rpmtxnBegin(rpmts ts, rpmtxnFlags flags)
 	ts->lock = rpmlockNew(ts->lockPath, _("transaction"));
 
     if (rpmlockAcquire(ts->lock)) {
-	txn = xcalloc(1, sizeof(*txn));
+	txn = (rpmtxn)xcalloc(1, sizeof(*txn));
 	txn->lock = ts->lock;
 	txn->flags = flags;
 	txn->ts = rpmtsLink(ts);

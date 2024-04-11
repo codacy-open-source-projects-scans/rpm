@@ -300,6 +300,14 @@ int rpmdsIsWeak(rpmds ds);
 int rpmdsIsReverse(rpmds ds);
 
 /** \ingroup rpmds
+ * Return whether dependency represents a sysusers.d entry
+ * @param ds		dependency set
+ * @param[out] sysuser	sysusers.d line if true (malloced), may be NULL
+ * @return		1 if reversed, 0 if not
+ */
+int rpmdsIsSysuser(rpmds ds, char **sysuser);
+
+/** \ingroup rpmds
  * Return current dependency color.
  * @param ds		dependency set
  * @return		current dependency color
@@ -456,6 +464,7 @@ int rpmdsRpmlibPool(rpmstrPool pool, rpmds * dsp, const void * tblp);
 
 
 typedef enum rpmrichOp_e {
+    RPMRICHOP_NONE    = 0,
     RPMRICHOP_SINGLE  = 1,
     RPMRICHOP_AND     = 2,
     RPMRICHOP_OR      = 3,

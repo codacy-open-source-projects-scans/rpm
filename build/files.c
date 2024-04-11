@@ -140,6 +140,11 @@ typedef struct FileEntry_s {
     int isDir;
 } * FileEntry;
 
+struct FileEntries_s {
+    struct FileEntry_s defEntry;
+    struct FileEntry_s curEntry;
+};
+
 typedef struct specialDir_s {
     char * dirname;
     ARGV_t files;
@@ -150,11 +155,7 @@ typedef struct specialDir_s {
     int entriesCount;
     int entriesAlloced;
 
-    struct {
-	struct FileEntry_s defEntry;
-	struct FileEntry_s curEntry;
-    } *entries;
-
+    struct FileEntries_s *entries;
 } * specialDir;
 
 typedef struct FileRecords_s {
@@ -359,7 +360,7 @@ static rpmRC parseForVerify(char * buf, int def, FileEntry entry)
     }
 
     /* Localize. Erase parsed string */
-    q = xmalloc((pe-p) + 1);
+    q = (char *)xmalloc((pe-p) + 1);
     rstrlcpy(q, p, (pe-p) + 1);
     while (p <= pe)
 	*p++ = ' ';
@@ -436,10 +437,10 @@ static rpmRC parseForDev(char * buf, FileEntry cur)
     }
 
     /* Localize. Erase parsed string */
-    q = xmalloc((pe-p) + 1);
+    q = (char *)xmalloc((pe-p) + 1);
     rstrlcpy(q, p, (pe-p) + 1);
 
-    attr_parameters = xmalloc((pe-p) + 1);
+    attr_parameters = (char *)xmalloc((pe-p) + 1);
     rstrlcpy(attr_parameters, p, (pe-p) + 1);
 
     while (p <= pe)
@@ -551,10 +552,10 @@ static rpmRC parseForAttr(rpmstrPool pool, char * buf, int def, FileEntry entry)
     }
 
     /* Localize. Erase parsed string */
-    q = xmalloc((pe-p) + 1);
+    q = (char *)xmalloc((pe-p) + 1);
     rstrlcpy(q, p, (pe-p) + 1);
 
-    attr_parameters = xmalloc((pe-p) + 1);
+    attr_parameters = (char *)xmalloc((pe-p) + 1);
     rstrlcpy(attr_parameters, p, (pe-p) + 1);
 
     while (p <= pe)
@@ -676,7 +677,7 @@ static rpmRC parseForConfig(char * buf, FileEntry cur)
     }
 
     /* Localize. Erase parsed string. */
-    q = xmalloc((pe-p) + 1);
+    q = (char *)xmalloc((pe-p) + 1);
     rstrlcpy(q, p, (pe-p) + 1);
     while (p <= pe)
 	*p++ = ' ';
@@ -764,7 +765,7 @@ static rpmRC parseForLang(char * buf, FileEntry cur)
     }
 
     /* Localize. Erase parsed string. */
-    q = xmalloc((pe-p) + 1);
+    q = (char *)xmalloc((pe-p) + 1);
     rstrlcpy(q, p, (pe-p) + 1);
     while (p <= pe)
 	*p++ = ' ';
@@ -825,7 +826,7 @@ static rpmRC parseForCaps(char * buf, FileEntry cur)
     }
 
     /* Localize. Erase parsed string. */
-    q = xmalloc((pe-p) + 1);
+    q = (char *)xmalloc((pe-p) + 1);
     rstrlcpy(q, p, (pe-p) + 1);
     while (p <= pe)
 	*p++ = ' ';
@@ -882,7 +883,7 @@ static VFA_t const virtualAttrs[] = {
 static rpmRC parseForSimple(char * buf, FileEntry cur, ARGV_t * fileNames)
 {
     char *s, *t, *end;
-    char *delim = " \t\n";
+    const char *delim = " \t\n";
     int quotes = 0;
     rpmRC res = RPMRC_OK;
     int allow_relative = (RPMFILE_PUBKEY|RPMFILE_DOC|RPMFILE_LICENSE);
@@ -1023,7 +1024,7 @@ static int seenHardLink(FileRecords files, FileListRec flp, rpm_ino_t *fileid)
  * @param pkg		(sub) package
  * @param isSrc		pass 1 for source packages 0 otherwise
  */
-static void genCpioListAndHeader(FileList fl, Package pkg, int isSrc)
+static void genCpioListAndHeader(FileList fl, rpmSpec spec, Package pkg, int isSrc)
 {
     FileListRec flp;
     char buf[BUFSIZ];
@@ -1033,23 +1034,43 @@ static void genCpioListAndHeader(FileList fl, Package pkg, int isSrc)
     rpm_loff_t totalFileSize = 0;
     Header h = pkg->header; /* just a shortcut */
     int override_date = 0;
-    time_t source_date_epoch = 0;
+    time_t mtime_clamp = 0;
     char *srcdate = getenv("SOURCE_DATE_EPOCH");
+    char *mtime_policy_str = rpmExpand("%{?build_mtime_policy}", NULL);
 
-    /* Limit the maximum date to SOURCE_DATE_EPOCH if defined
-     * similar to the tar --clamp-mtime option
-     * https://reproducible-builds.org/specs/source-date-epoch/
-     */
-    if (srcdate && rpmExpandNumeric("%{?clamp_mtime_to_source_date_epoch}")) {
-	char *endptr;
-	errno = 0;
-	source_date_epoch = strtol(srcdate, &endptr, 10);
-	if (srcdate == endptr || *endptr || errno != 0) {
-	    rpmlog(RPMLOG_ERR, _("unable to parse %s=%s\n"), "SOURCE_DATE_EPOCH", srcdate);
-	    fl->processingFailed = 1;
+    /* backward compatibility */
+    if (!*mtime_policy_str) {
+        if (srcdate && rpmExpandNumeric("%{?clamp_mtime_to_source_date_epoch}")) {
+	    free(mtime_policy_str);
+	    mtime_policy_str = xstrdup("clamp_to_source_date_epoch");
+	    rpmlog(RPMLOG_WARNING,
+		    _("%%clamp_mtime_to_source_date_epoch is deprecated, please use %%build_mtime_policy\n"));
 	}
-	override_date = 1;
     }
+
+    if (!strcmp(mtime_policy_str, "clamp_to_buildtime")) {
+	mtime_clamp = spec->buildTime;
+	override_date = 1;
+    } else if (!strcmp(mtime_policy_str, "clamp_to_source_date_epoch")) {
+	/* Limit the maximum date to SOURCE_DATE_EPOCH if defined
+	 * similar to the tar --clamp-mtime option
+	 * https://reproducible-builds.org/specs/source-date-epoch/
+	 */
+	if (srcdate) {
+	    char *endptr;
+	    errno = 0;
+	    mtime_clamp = strtol(srcdate, &endptr, 10);
+	    if (srcdate == endptr || *endptr || errno != 0) {
+		rpmlog(RPMLOG_ERR, _("unable to parse %s=%s\n"), "SOURCE_DATE_EPOCH", srcdate);
+		fl->processingFailed = 1;
+	    }
+	    override_date = 1;
+	}
+    } else if (*mtime_policy_str) {
+	rpmlog(RPMLOG_WARNING,
+		_("Unknown mtime policy '%s'\n"), mtime_policy_str);
+    }
+    free(mtime_policy_str);
 
     /*
      * See if non-md5 file digest algorithm is requested. If not
@@ -1100,7 +1121,7 @@ static void genCpioListAndHeader(FileList fl, Package pkg, int isSrc)
 	      sizeof(*(fl->files.recs)), compareFileListRecs);
     }
     
-    pkg->dpaths = xmalloc((fl->files.used + 1) * sizeof(*pkg->dpaths));
+    pkg->dpaths = (char **)xmalloc((fl->files.used + 1) * sizeof(*pkg->dpaths));
 
     /* Generate the header. */
     for (i = 0, flp = fl->files.recs; i < fl->files.used; i++, flp++) {
@@ -1176,8 +1197,8 @@ static void genCpioListAndHeader(FileList fl, Package pkg, int isSrc)
 	headerPutString(h, RPMTAG_FILEGROUPNAME,
 			rpmstrPoolStr(fl->pool, flp->gname));
 
-	/* Only use 64bit filesizes tag if required. */
-	if (fl->largeFiles) {
+	/* Use 64bit filesizes always on v6, on older only if required. */
+	if (pkg->rpmver >= 6 || fl->largeFiles) {
 	    rpm_loff_t rsize64 = (rpm_loff_t)flp->fl_size;
 	    headerPutUint64(h, RPMTAG_LONGFILESIZES, &rsize64, 1);
             (void) rpmlibNeedsFeature(pkg, "LargeFiles", "4.12.0-1");
@@ -1192,8 +1213,8 @@ static void genCpioListAndHeader(FileList fl, Package pkg, int isSrc)
 	    }
 	}
 	
-	if (override_date && flp->fl_mtime > source_date_epoch) {
-	    flp->fl_mtime = source_date_epoch;
+	if (override_date && flp->fl_mtime > mtime_clamp) {
+	    flp->fl_mtime = mtime_clamp;
 	}
 	/*
  	 * For items whose size varies between systems, always explicitly 
@@ -1280,7 +1301,8 @@ static void genCpioListAndHeader(FileList fl, Package pkg, int isSrc)
     }
     pkg->dpaths[npaths] = NULL;
 
-    if (totalFileSize < UINT32_MAX) {
+    /* Use 64bit sizes always on v6, on older only if required. */
+    if (pkg->rpmver < 6 && totalFileSize < UINT32_MAX) {
 	rpm_off_t totalsize = totalFileSize;
 	headerPutUint32(h, RPMTAG_SIZE, &totalsize, 1);
     } else {
@@ -1924,7 +1946,7 @@ static int generateBuildIDs(FileList fl, ARGV_t *files)
 			    addid = 1;
 			}
 			if (addid) {
-			    const unsigned char *p = build_id;
+			    const unsigned char *p = (const unsigned char *)build_id;
 			    const unsigned char *end = p + len;
 			    char *id_str;
 			    if (allocated <= nr_ids) {
@@ -1936,7 +1958,7 @@ static int generateBuildIDs(FileList fl, ARGV_t *files)
 			    }
 
 			    paths[nr_ids] = xstrdup(flp->cpioPath);
-			    id_str = ids[nr_ids] = xmalloc(2 * len + 1);
+			    id_str = ids[nr_ids] = (char *)xmalloc(2 * len + 1);
 			    while (p < end)
 				id_str += sprintf(id_str, "%02x",
 						  (unsigned)*p++);
@@ -2337,11 +2359,11 @@ static char * getSpecialDocDir(Header h, rpmFlags sdtype)
 
 static specialDir specialDirNew(Header h, rpmFlags sdtype)
 {
-    specialDir sd = xcalloc(1, sizeof(*sd));
+    specialDir sd = (specialDir)xcalloc(1, sizeof(*sd));
 
     sd->entriesCount = 0;
     sd->entriesAlloced = 10;
-    sd->entries = xcalloc(sd->entriesAlloced, sizeof(sd->entries[0]));
+    sd->entries = (struct FileEntries_s *)xcalloc(sd->entriesAlloced, sizeof(*(sd->entries)));
 
     sd->dirname = getSpecialDocDir(h, sdtype);
     sd->sdtype = sdtype;
@@ -2390,7 +2412,7 @@ static void processSpecialDir(rpmSpec spec, Package pkg, FileList fl,
     StringBuf docScript = newStringBuf();
     int count = sd->entriesCount;
     char *basepath = rpmGenPath(spec->rootDir, "%{builddir}", "%{?buildsubdir}");
-    ARGV_t *files = xmalloc(sizeof(*files) * count);
+    ARGV_t *files = (ARGV_t *)xmalloc(sizeof(*files) * count);
     int i, j;
 
     /* Glob and copy file entries from builddir to buildroot */
@@ -2625,6 +2647,7 @@ static rpmRC processPackageFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags,
 	goto exit;
 
 #ifdef HAVE_LIBDW
+{
     /* Check build-ids and add build-ids links for files to package list. */
     const char *arch = headerGetString(pkg->header, RPMTAG_ARCH);
     if (!rstreq(arch, "noarch")) {
@@ -2646,29 +2669,20 @@ static rpmRC processPackageFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags,
 	if (fl.processingFailed)
 	    goto exit;
     }
+}
 #endif
 
     /* Verify that file attributes scope over hardlinks correctly. */
     if (checkHardLinks(&fl.files))
 	(void) rpmlibNeedsFeature(pkg, "PartialHardlinkSets", "4.0.4-1");
 
-    genCpioListAndHeader(&fl, pkg, 0);
+    genCpioListAndHeader(&fl, spec, pkg, 0);
 
 exit:
     FileListFree(&fl);
     specialDirFree(specialDoc);
     specialDirFree(specialLic);
     return fl.processingFailed ? RPMRC_FAIL : RPMRC_OK;
-}
-
-static void genSourceRpmName(rpmSpec spec)
-{
-    if (spec->sourceRpmName == NULL) {
-	char *nvr = headerGetAsString(spec->packages->header, RPMTAG_NVR);
-	rasprintf(&spec->sourceRpmName, "%s.%ssrc.rpm", nvr,
-	    	  spec->noSource ? "no" : "");
-	free(nvr);
-    }
 }
 
 rpmRC processSourceFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags)
@@ -2688,7 +2702,6 @@ rpmRC processSourceFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags)
 	oneshot = 1;
     }
 
-    genSourceRpmName(spec);
     /* Construct the file list and source entries */
     argvAdd(&files, spec->specFile);
     for (srcPtr = spec->sources; srcPtr != NULL; srcPtr = srcPtr->next) {
@@ -2719,7 +2732,7 @@ rpmRC processSourceFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags)
 	free(a);
     }
     fl.files.alloced = spec->numSources + 1;
-    fl.files.recs = xcalloc(fl.files.alloced, sizeof(*fl.files.recs));
+    fl.files.recs = (FileListRec)xcalloc(fl.files.alloced, sizeof(*fl.files.recs));
     fl.pkgFlags = pkgFlags;
 
     for (ARGV_const_t fp = files; *fp != NULL; fp++) {
@@ -2782,7 +2795,7 @@ rpmRC processSourceFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags)
 
     if (! fl.processingFailed) {
 	if (sourcePkg->header != NULL) {
-	    genCpioListAndHeader(&fl, sourcePkg, 1);
+	    genCpioListAndHeader(&fl, spec, sourcePkg, 1);
 	}
     }
 
@@ -2798,7 +2811,7 @@ rpmRC processSourceFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags)
  */
 static int checkFiles(const char *buildRoot, StringBuf fileList)
 {
-    static char * const av_ckfile[] = { "%{?__check_files}", NULL };
+    static const char * av_ckfile[] = { "%{?__check_files}", NULL };
     StringBuf sb_stdout = NULL;
     int rc = -1;
     char * s = rpmExpand(av_ckfile[0], NULL);
@@ -2808,7 +2821,7 @@ static int checkFiles(const char *buildRoot, StringBuf fileList)
 
     rpmlog(RPMLOG_NOTICE, _("Checking for unpackaged file(s): %s\n"), s);
 
-    rc = rpmfcExec(av_ckfile, fileList, &sb_stdout, 0, buildRoot);
+    rc = rpmfcExec((ARGV_const_t)av_ckfile, fileList, &sb_stdout, 0, buildRoot);
     if (rc < 0)
 	goto exit;
     
@@ -2845,8 +2858,8 @@ static rpmTagVal copyTagsFromMainDebug[] = {
  * the correct package name */
 static void patchDebugPackageString(Package dbg, rpmTag tag, Package pkg, Package mainpkg)
 {
-    const char *oldname, *newname, *old;
-    char *oldsubst = NULL, *newsubst = NULL, *p;
+    const char *oldname, *newname, *old, *p;
+    char *oldsubst = NULL, *newsubst = NULL;
     oldname = headerGetString(mainpkg->header, RPMTAG_NAME);
     newname = headerGetString(pkg->header, RPMTAG_NAME);
     rasprintf(&oldsubst, "package %s", oldname);
@@ -2854,11 +2867,11 @@ static void patchDebugPackageString(Package dbg, rpmTag tag, Package pkg, Packag
     old = headerGetString(dbg->header, tag);
     p = old ? strstr(old, oldsubst) : NULL;
     if (p) {
-	char *new = NULL;
-	rasprintf(&new, "%.*s%s%s", (int)(p - old), old, newsubst, p + strlen(oldsubst));
+	char *newval = NULL;
+	rasprintf(&newval, "%.*s%s%s", (int)(p - old), old, newsubst, p + strlen(oldsubst));
 	headerDel(dbg->header, tag);
-	headerPutString(dbg->header, tag, new);
-	_free(new);
+	headerPutString(dbg->header, tag, newval);
+	_free(newval);
     }
     _free(oldsubst);
     _free(newsubst);
@@ -3130,7 +3143,6 @@ rpmRC processBinaryFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags,
     elf_version (EV_CURRENT);
 #endif
     check_fileList = newStringBuf();
-    genSourceRpmName(spec);
     buildroot = rpmGenPath(spec->rootDir, spec->buildRoot, NULL);
     
     if (rpmExpandNumeric("%{?_debuginfo_subpackages}")) {
@@ -3185,8 +3197,6 @@ rpmRC processBinaryFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags,
 
 	if (pkg->fileList == NULL)
 	    continue;
-
-	headerPutString(pkg->header, RPMTAG_SOURCERPM, spec->sourceRpmName);
 
 	nvr = headerGetAsString(pkg->header, RPMTAG_NVRA);
 	rpmlog(RPMLOG_NOTICE, _("Processing files: %s\n"), nvr);

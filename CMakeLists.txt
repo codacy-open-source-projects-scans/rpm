@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.18)
 
 project(rpm
-	VERSION 4.19.90
+	VERSION 5.99.90
 	DESCRIPTION "The RPM Package Manager"
 	HOMEPAGE_URL "http://rpm.org"
-	LANGUAGES C
+	LANGUAGES C CXX
 )
 
 # user configurable stuff
@@ -57,6 +57,10 @@ set(RPM_LIBVERSION ${RPM_SOVERSION}.0.0)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# extensions needed for typeof() hacks during transition
+set(CMAKE_CXX_EXTENSIONS ON)
 set(CMAKE_SHARED_LIBRARY_PREFIX "")
 set(CMAKE_SHARED_MODULE_PREFIX "")
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -161,13 +165,6 @@ function(makemacros)
 	set(RPMCANONVENDOR ${host_vendor})
 	set(RPMCANONOS ${host_os})
 	set(RPMCANONGNU -gnu)
-
-	if (ENABLE_CUTF8)
-		set(C_LOCALE "C.UTF-8")
-	else()
-		set(C_LOCALE "C")
-	endif()
-	message(INFO " using ${C_LOCALE} as default locale")
 
 	configure_file(platform.in platform @ONLY)
 	configure_file(rpmrc.in rpmrc @ONLY)
@@ -390,14 +387,24 @@ if (NOT MAJOR_IN_SYSMACROS)
 	check_symbol_exists(major "sys/mkdev.h" MAJOR_IN_MKDEV)
 endif()
 
+if (ENABLE_CUTF8)
+	set(C_LOCALE "C.UTF-8")
+else()
+	set(C_LOCALE "C")
+endif()
+message(INFO " using ${C_LOCALE} as default locale")
+
 configure_file(config.h.in config.h)
 
 add_compile_definitions(HAVE_CONFIG_H)
 
-add_compile_options(-Wall -Wpointer-arith -Wmissing-prototypes -Wstrict-prototypes -Wempty-body)
+add_compile_options(-Wall -Wpointer-arith -Wempty-body)
 if (ENABLE_WERROR)
 	add_compile_options(-Werror)
 endif()
+
+set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-exceptions -Wno-c++20-compat -Wno-sign-compare")
+set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wmissing-prototypes -Wstrict-prototypes")
 
 if (ENABLE_ASAN)
 	add_compile_options(-fsanitize=address)

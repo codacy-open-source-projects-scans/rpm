@@ -72,7 +72,6 @@ static char *doPatch(rpmSpec spec, uint32_t c, int strip, const char *db,
 	rpmlog(RPMLOG_ERR, _("No patch number %u\n"), c);
 	goto exit;
     }
-    const char *fn = sp->path;
 
     if (db) {
 	rasprintf(&arg_backup, "-b --suffix %s", db);
@@ -96,10 +95,10 @@ static char *doPatch(rpmSpec spec, uint32_t c, int strip, const char *db,
 		setUtc ? " -Z" : "");
 
     /* Avoid the extra cost of fork and pipe for uncompressed patches */
-    if (notCompressed(fn)) {
-	patchcmd = rpmExpand("%{__patch} ", args, " < ", fn, NULL);
+    if (notCompressed(sp->path)) {
+	patchcmd = rpmExpand("%{__patch} ", args, " < ", sp->path, NULL);
     } else {
-	patchcmd = rpmExpand("{ %{__rpmuncompress} ", fn, " || echo patch_fail ; } | "
+	patchcmd = rpmExpand("{ %{__rpmuncompress} ", sp->path, " || echo patch_fail ; } | "
                              "%{__patch} ", args, NULL);
     }
 
@@ -158,7 +157,7 @@ exit:
  */
 void doSetupMacro(rpmMacroBuf mb, rpmMacroEntry me, ARGV_t margs, size_t *parsed)
 {
-    rpmSpec spec = rpmMacroEntryPriv(me);
+    rpmSpec spec = (rpmSpec)rpmMacroEntryPriv(me);
     char *line = argvJoin(margs, " ");
     char *buf = NULL;
     StringBuf before = newStringBuf();
@@ -322,7 +321,7 @@ exit:
  */
 void doPatchMacro(rpmMacroBuf mb, rpmMacroEntry me, ARGV_t margs, size_t *parsed)
 {
-    rpmSpec spec = rpmMacroEntryPriv(me);
+    rpmSpec spec = (rpmSpec)rpmMacroEntryPriv(me);
     char *line = argvJoin(margs, " ");
     char *opt_b, *opt_d, *opt_o;
     int opt_p, opt_R, opt_E, opt_F, opt_Z;

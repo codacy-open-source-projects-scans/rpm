@@ -382,7 +382,7 @@ static void dolog(struct rpmlogRec_s *rec, int saverec)
     int cbrc = RPMLOG_DEFAULT;
     int needexit = 0;
     FILE *clog = NULL;
-    rpmlogCallbackData *cbdata = NULL;
+    rpmlogCallbackData cbdata = NULL;
     rpmlogCallback cbfunc = NULL;
     rpmlogCtx ctx = rpmlogCtxAcquire(saverec);
 
@@ -445,14 +445,14 @@ void rpmlog (int code, const char *fmt, ...)
     if (n >= -1) {
 	struct rpmlogRec_s rec;
 	size_t nb = n + 1;
-	char *msg = xmalloc(nb);
+	char *msg = (char *)xmalloc(nb);
 
 	va_start(ap, fmt);
 	n = vsnprintf(msg, nb, fmt, ap);
 	va_end(ap);
 
 	rec.code = code;
-	rec.pri = pri;
+	rec.pri = (rpmlogLvl)pri;
 	rec.message = msg;
 
 	dolog(&rec, saverec);

@@ -38,6 +38,16 @@ else()
 	endif()
 endif()
 
+set (cxx_sources
+	argv.c base64.c digest.c expression.c lposix.c macro.c
+	digest_libgcrypt.c digest_openssl.c
+	rgetopt.c rpmfileutil.c rpmglob.c rpmhook.c rpmio.c
+	rpmkeyring.c rpmlog.c rpmlua.c rpmpgp.c rpm_sequoia.c rpmsq.c
+	rpmsw.c rpmstring.c rpmstrpool.c
+	rpmver.c rpmvercmp.c url.c
+)
+set_source_files_properties(${cxx_sources} PROPERTIES LANGUAGE CXX)
+
 set_target_properties(librpmio PROPERTIES
 	VERSION ${RPM_LIBVERSION}
 	SOVERSION ${RPM_SOVERSION}

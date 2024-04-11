@@ -192,6 +192,7 @@ typedef enum pgpSubType_e {
     PGPSUBTYPE_REVOKE_REASON	=  29, /*!< reason for revocation */
     PGPSUBTYPE_FEATURES		=  30, /*!< feature flags (gpg) */
     PGPSUBTYPE_EMBEDDED_SIG	=  32, /*!< embedded signature (gpg) */
+    PGPSUBTYPE_ISSUER_FINGERPRINT= 33, /*!< issuer fingerprint */
 
     PGPSUBTYPE_INTERNAL_100	= 100, /*!< internal or user-defined */
     PGPSUBTYPE_INTERNAL_101	= 101, /*!< internal or user-defined */
@@ -259,22 +260,6 @@ typedef enum pgpValType_e {
  * @return		string value of byte
  */
 const char * pgpValString(pgpValType type, uint8_t val);
-
-/** \ingroup rpmpgp
- * Return (native-endian) integer from big-endian representation.
- * @param s		pointer to big-endian integer
- * @param nbytes	no. of bytes
- * @return		native-endian integer
- */
-static inline
-unsigned int pgpGrab(const uint8_t *s, size_t nbytes)
-{
-    size_t i = 0;
-    size_t nb = (nbytes <= sizeof(i) ? nbytes : sizeof(i));
-    while (nb--)
-	i = (i << 8) | *s++;
-    return i;
-}
 
 /** \ingroup rpmpgp
  * Calculate OpenPGP public key fingerprint.

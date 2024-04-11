@@ -21,7 +21,7 @@ static size_t read_file(const char *input, char **ret)
     else
 	in = fopen(input, "r");
 
-    text = xmalloc(sz);
+    text = (char *)xmalloc(sz);
 
     if (!in) {
 	fprintf(stderr, "cannot open `%s'", input);
@@ -130,7 +130,7 @@ static void add_input(const char *filename, char ***package_names,
     size_t n_names = *n_package_names;
 
     if (!*package_names)
-	new_names = names = xmalloc(sizeof(char *) * 2);
+	new_names = names = (char **)xmalloc(sizeof(char *) * 2);
 
     if (read_file(filename, &orig_input_buffer) < 2) {
 	if (new_names)
@@ -144,17 +144,17 @@ static void add_input(const char *filename, char ***package_names,
     while (input_buffer && *input_buffer &&
 	   (position_of_newline = strchrnul(input_buffer, '\n'))) {
 	size_t sz = position_of_newline - input_buffer;
-	char *new;
+	char *newl;
 
 	if (sz == 0) {
 	    input_buffer = position_of_newline + 1;
 	    continue;
 	}
 
-	new = rstrndup(input_buffer, sz);
+	newl = rstrndup(input_buffer, sz);
 
 	names = xrealloc(names, sizeof(char *) * (n_names + 1));
-	names[n_names] = new;
+	names[n_names] = newl;
 	n_names++;
 
 	/* Move buffer ahead to next line. */

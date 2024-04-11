@@ -48,6 +48,7 @@ static const char *sigTagName(uint32_t tag)
     case RPMSIGTAG_FILESIGNATURELENGTH: return "filesignaturelength";
     case RPMSIGTAG_VERITYSIGNATURES: return "veritysignatures";
     case RPMSIGTAG_VERITYSIGNATUREALGO: return "veritysignaturealgo";
+    case RPMSIGTAG_RESERVED: return "Reserved";
     default:
 	break;
     }
@@ -128,7 +129,7 @@ static int readhdr(int fd, int sighdr, const char *msg)
     indexLen = numEntries * sizeof(*entry);
     headerLen = indexLen + numBytes;
 
-    blob = malloc(sizeof(numEntries) + sizeof(numBytes) + headerLen);
+    blob = (uint32_t *)malloc(sizeof(numEntries) + sizeof(numBytes) + headerLen);
     blob[0] = htonl(numEntries);
     blob[1] = htonl(numBytes);
 
@@ -155,6 +156,7 @@ static int readhdr(int fd, int sighdr, const char *msg)
 	}
     }
     
+{
     entry = (struct entryInfo *) (blob + 2);
     uint32_t tag = htonl(entry->tag);
     struct entryInfo _trailer, *trailer = &_trailer;
@@ -190,6 +192,7 @@ static int readhdr(int fd, int sighdr, const char *msg)
 	    dumptag(trailer, sighdr, "\t\t");
 	}
     }
+}
 
     printf("\n");
     rc = 0;

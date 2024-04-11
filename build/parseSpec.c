@@ -149,7 +149,7 @@ int handleComments(char *s)
 static void ofilineMacro(rpmMacroBuf mb,
 			rpmMacroEntry me, ARGV_t margs, size_t *parsed)
 {
-    OFI_t *ofi = rpmMacroEntryPriv(me);
+    OFI_t *ofi = (OFI_t *)rpmMacroEntryPriv(me);
     if (ofi) {
 	char lnobuf[16];
 	snprintf(lnobuf, sizeof(lnobuf), "%d", ofi->lineNum);
@@ -160,13 +160,13 @@ static void ofilineMacro(rpmMacroBuf mb,
 /* Push a file to spec's file stack, return the newly pushed entry */
 static OFI_t * pushOFI(rpmSpec spec, const char *fn)
 {
-    OFI_t *ofi = xcalloc(1, sizeof(*ofi));
+    OFI_t *ofi = (OFI_t *)xcalloc(1, sizeof(*ofi));
 
     ofi->fp = NULL;
     ofi->fileName = xstrdup(fn);
     ofi->lineNum = 0;
     ofi->readBufLen = BUFSIZ;
-    ofi->readBuf = xmalloc(ofi->readBufLen);
+    ofi->readBuf = (char *)xmalloc(ofi->readBufLen);
     ofi->readBuf[0] = '\0';
     ofi->readPtr = NULL;
     ofi->next = spec->fileStack;
@@ -309,7 +309,7 @@ static int copyNextLineFromOFI(rpmSpec spec, OFI_t *ofi, int strip)
 
 	    if (spec->lbufOff >= spec->lbufSize) {
 		spec->lbufSize += BUFSIZ;
-		spec->lbuf = realloc(spec->lbuf, spec->lbufSize);
+		spec->lbuf = xrealloc(spec->lbuf, spec->lbufSize);
 	    }
 	}
 	spec->lbuf[spec->lbufOff] = '\0';
@@ -345,7 +345,7 @@ static int copyNextLineFromOFI(rpmSpec spec, OFI_t *ofi, int strip)
 	
 	/* If it doesn't, ask for one more line. */
 	if (pc || bc || xc || nc ) {
-	    spec->nextline = "";
+	    spec->nextline = NULL;
 	    return 1;
 	}
 	spec->lbufOff = 0;
@@ -569,7 +569,7 @@ retry:
     }
 
     if (lineType->id & LINE_IFANY) {
-	rl = xmalloc(sizeof(*rl));
+	rl = (struct ReadLevelEntry *)xmalloc(sizeof(*rl));
 	rl->reading = spec->readStack->reading && match;
 	rl->next = spec->readStack;
 	rl->lineNum = ofi->lineNum;
@@ -731,11 +731,20 @@ static void initSourceHeader(rpmSpec spec)
 	    }
 	}
     }
+    if (spec->sourceRpmName == NULL) {
+	char *nvr = headerGetAsString(spec->packages->header, RPMTAG_NVR);
+	rasprintf(&spec->sourceRpmName, "%s.%ssrc.rpm", nvr,
+		spec->noSource ? "no" : "");
+	free(nvr);
+    }
 }
 
 static void finalizeSourceHeader(rpmSpec spec)
 {
+    uint32_t one = 1;
+
     /* Only specific tags are added to the source package header */
+    headerPutUint32(spec->sourcePackage->header, RPMTAG_SOURCEPACKAGE, &one, 1);
     headerCopyTags(spec->packages->header, spec->sourcePackage->header, sourceTags);
 
     /* Provide all package NEVRs that would be built */
@@ -1174,7 +1183,7 @@ static rpmRC parseSpecSection(rpmSpec *specptr, enum parseStages stage)
 
 	    closeSpec(spec);
 
-	    spec->BASpecs = xcalloc(spec->BACount, sizeof(*spec->BASpecs));
+	    spec->BASpecs = (rpmSpec *)xcalloc(spec->BACount, sizeof(*spec->BASpecs));
 	    index = 0;
 	    if (spec->BANames != NULL)
 	    for (x = 0; x < spec->BACount; x++) {
@@ -1267,13 +1276,6 @@ static rpmSpec parseSpec(const char *specFile, rpmSpecFlags flags,
     if (parseSpecSection(&spec, PARSE_SPECFILE) != RPMRC_OK)
 	goto errxit;
 
-    if (spec->sections[SECT_CLEAN] == NULL) {
-	char *body = rpmExpand("%{buildsystem_default_clean}", NULL);
-	spec->sections[SECT_CLEAN] = newStringBuf();
-	appendLineStringBuf(spec->sections[SECT_CLEAN], body);
-	free(body);
-    }
-
     /* Assemble source header from parsed components */
     initSourceHeader(spec);
     return spec;
@@ -1306,6 +1308,8 @@ static rpmRC finalizeSpec(rpmSpec spec)
 	headerPutString(pkg->header, RPMTAG_OS, os);
 	headerPutString(pkg->header, RPMTAG_PLATFORM, platform);
 	headerPutString(pkg->header, RPMTAG_OPTFLAGS, optflags);
+	headerPutString(pkg->header, RPMTAG_SOURCERPM, spec->sourceRpmName);
+
 
 	if (pkg != spec->packages) {
 	    copyInheritedTags(pkg->header, spec->packages->header);

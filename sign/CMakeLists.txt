@@ -23,4 +23,9 @@ if (WITH_FSVERITY)
 	target_link_libraries(librpmsign PRIVATE PkgConfig::FSVERITY)
 endif()
 
+set (cxx_sources
+	rpmgensig.c rpmsignfiles.c rpmsignverity.c
+)
+set_source_files_properties(${cxx_sources} PROPERTIES LANGUAGE CXX)
+
 install(TARGETS librpmsign EXPORT rpm-targets)

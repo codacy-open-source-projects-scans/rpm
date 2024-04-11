@@ -135,7 +135,7 @@ static inline int parseYesNo(const char * s)
 
 static struct Source *newSource(uint32_t num, const char *path, int flags)
 {
-    struct Source *p = xmalloc(sizeof(*p));
+    struct Source *p = (struct Source *)xmalloc(sizeof(*p));
     p->num = num;
     p->fullSource = xstrdup(path);
     p->flags = flags;
@@ -574,7 +574,7 @@ static struct optionalTag {
     { RPMTAG_TRANSLATIONURL,	"%{translationurl}" },
     { RPMTAG_UPSTREAMRELEASES,	"%{upstreamreleases}" },
     { RPMTAG_MODULARITYLABEL,	"%{modularitylabel}"},
-    { -1, NULL }
+    { 0, NULL }
 };
 
 /**
@@ -632,7 +632,7 @@ static rpmRC addIcon(Package pkg, const char * file)
 	goto exit;
     }
 
-    icon = xmalloc(iconsize + 1);
+    icon = (uint8_t *)xmalloc(iconsize + 1);
     *icon = '\0';
 
     nb = Fread(icon, sizeof(icon[0]), iconsize, fd);

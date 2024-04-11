@@ -23,7 +23,7 @@ struct headerTagTableEntry_s {
     int extension;		/*!< Extension or "real" tag */
 };
 
-#include "tagtbl.C"
+#include "tagtbl.inc"
 
 #define TABLESIZE (sizeof(rpmTagTable) / sizeof(rpmTagTable[0]) - 1)
 static const int rpmTagTableSize = TABLESIZE;
@@ -239,7 +239,7 @@ int rpmTagGetNames(rpmtd tagnames, int fullname)
 
     rpmtdReset(tagnames);
     tagnames->count = rpmTagTableSize;
-    tagnames->data = names = xmalloc(tagnames->count * sizeof(*names));
+    tagnames->data = names = (const char **)xmalloc(tagnames->count * sizeof(*names));
     tagnames->type = RPM_STRING_ARRAY_TYPE;
     tagnames->flags = RPMTD_ALLOCED | RPMTD_IMMUTABLE;
 

@@ -225,7 +225,7 @@ struct charInDepData {
 static rpmRC charInDepCb(void *cbdata, rpmrichParseType type,
 		const char *n, int nl, const char *e, int el, rpmsenseFlags sense,
 		rpmrichOp op, char **emsg) {
-    struct charInDepData *data = cbdata;
+    struct charInDepData *data = (struct charInDepData *)cbdata;
     if (e && data && memchr(e, data->c, el))
 	data->present = 1;
 
@@ -457,7 +457,8 @@ static rpmRC writeRPM(Package pkg, unsigned char ** pkgidp,
     char * upld = NULL;
     uint32_t pld_algo = RPM_HASH_SHA256; /* TODO: macro configuration */
     rpmRC rc = RPMRC_FAIL; /* assume failure */
-    rpm_loff_t archiveSize = 0;
+    rpm_loff_t archiveSize = 0; /* uncompressed */
+    rpm_loff_t payloadSize = 0; /* compressed */
     off_t sigStart, hdrStart, payloadStart, payloadEnd;
 
     if (pkgidp)
@@ -475,13 +476,20 @@ static rpmRC writeRPM(Package pkg, unsigned char ** pkgidp,
 	headerPutString(pkg->header, RPMTAG_COOKIE, *cookie);
     }
 
+    if (pkg->rpmver >= 6)
+	headerPutUint32(pkg->header, RPMTAG_RPMFORMAT, &(pkg->rpmver), 1);
+
     /* Create a dummy payload digests to get the header size right */
-    pld = nullDigest(pld_algo, 1);
+    pld = (char *)nullDigest(pld_algo, 1);
     headerPutUint32(pkg->header, RPMTAG_PAYLOADDIGESTALGO, &pld_algo, 1);
     headerPutString(pkg->header, RPMTAG_PAYLOADDIGEST, pld);
     headerPutString(pkg->header, RPMTAG_PAYLOADDIGESTALT, pld);
     pld = _free(pld);
-    
+    if (pkg->rpmver >= 6) {
+	headerPutUint64(pkg->header, RPMTAG_PAYLOADSIZE, &payloadSize, 1);
+	headerPutUint64(pkg->header, RPMTAG_PAYLOADSIZEALT, &archiveSize, 1);
+    }
+
     /* Check for UTF-8 encoding of string tags, add encoding tag if all good */
     if (checkForEncoding(pkg->header, 1))
 	goto exit;
@@ -504,10 +512,12 @@ static rpmRC writeRPM(Package pkg, unsigned char ** pkgidp,
     sigStart = Ftell(fd);
 
     /* Generate and write a placeholder signature header */
-    SHA1 = nullDigest(RPM_HASH_SHA1, 1);
-    SHA256 = nullDigest(RPM_HASH_SHA256, 1);
-    MD5 = nullDigest(RPM_HASH_MD5, 0);
-    if (rpmGenerateSignature(SHA256, SHA1, MD5, 0, 0, fd))
+    if (pkg->rpmver < 6) {
+	SHA1 = (char *)nullDigest(RPM_HASH_SHA1, 1);
+	MD5 = (uint8_t *)nullDigest(RPM_HASH_MD5, 0);
+    }
+    SHA256 = (char *)nullDigest(RPM_HASH_SHA256, 1);
+    if (rpmGenerateSignature(SHA256, SHA1, MD5, 0, 0, fd, pkg->rpmver))
 	goto exit;
     SHA1 = _free(SHA1);
     SHA256 = _free(SHA256);
@@ -523,19 +533,27 @@ static rpmRC writeRPM(Package pkg, unsigned char ** pkgidp,
     if (cpio_doio(fd, pkg, rpmio_flags, pld_algo, &archiveSize, &upld))
 	goto exit;
     payloadEnd = Ftell(fd);
+    payloadSize = payloadEnd - payloadStart;
 
     /* Re-read payload to calculate compressed digest */
     fdInitDigestID(fd, pld_algo, RPMTAG_PAYLOADDIGEST, 0);
-    if (fdConsume(fd, payloadStart, payloadEnd - payloadStart))
+    if (fdConsume(fd, payloadStart, payloadSize))
 	goto exit;
     fdFiniDigest(fd, RPMTAG_PAYLOADDIGEST, (void **)&pld, NULL, 1);
 
-    /* Insert the payload digests in main header */
+    /* Insert the payload digests + size in main header */
     headerDel(pkg->header, RPMTAG_PAYLOADDIGEST);
     headerPutString(pkg->header, RPMTAG_PAYLOADDIGEST, pld);
     headerDel(pkg->header, RPMTAG_PAYLOADDIGESTALT);
     headerPutString(pkg->header, RPMTAG_PAYLOADDIGESTALT, upld);
     pld = _free(pld);
+
+    if (pkg->rpmver >= 6) {
+	headerDel(pkg->header, RPMTAG_PAYLOADSIZE);
+	headerPutUint64(pkg->header, RPMTAG_PAYLOADSIZE, &payloadSize, 1);
+	headerDel(pkg->header, RPMTAG_PAYLOADSIZEALT);
+	headerPutUint64(pkg->header, RPMTAG_PAYLOADSIZEALT, &archiveSize, 1);
+    }
 
     /* Write the final header */
     if (fdJump(fd, hdrStart))
@@ -543,16 +561,19 @@ static rpmRC writeRPM(Package pkg, unsigned char ** pkgidp,
     if (writeHdr(fd, pkg->header))
 	goto exit;
 
-    /* Calculate digests: SHA on header, legacy MD5 on header + payload */
-    fdInitDigestID(fd, RPM_HASH_MD5, RPMTAG_SIGMD5, 0);
-    fdInitDigestID(fd, RPM_HASH_SHA1, RPMTAG_SHA1HEADER, 0);
+    /* Calculate the digests */
+    if (pkg->rpmver < 6) {
+	/* SHA1 and legacy MD5 on header + payload only in v4 */
+	fdInitDigestID(fd, RPM_HASH_MD5, RPMTAG_SIGMD5, 0);
+	fdInitDigestID(fd, RPM_HASH_SHA1, RPMTAG_SHA1HEADER, 0);
+    }
     fdInitDigestID(fd, RPM_HASH_SHA256, RPMTAG_SHA256HEADER, 0);
     if (fdConsume(fd, hdrStart, payloadStart - hdrStart))
 	goto exit;
     fdFiniDigest(fd, RPMTAG_SHA1HEADER, (void **)&SHA1, NULL, 1);
     fdFiniDigest(fd, RPMTAG_SHA256HEADER, (void **)&SHA256, NULL, 1);
 
-    if (fdConsume(fd, 0, payloadEnd - payloadStart))
+    if (fdConsume(fd, 0, payloadSize))
 	goto exit;
     fdFiniDigest(fd, RPMTAG_SIGMD5, (void **)&MD5, NULL, 0);
 
@@ -560,8 +581,10 @@ static rpmRC writeRPM(Package pkg, unsigned char ** pkgidp,
 	goto exit;
 
     /* Generate the signature. Now with right values */
-    if (rpmGenerateSignature(SHA256, SHA1, MD5, payloadEnd - hdrStart, archiveSize, fd))
+    if (rpmGenerateSignature(SHA256, SHA1, MD5, payloadEnd - hdrStart,
+				archiveSize, fd, pkg->rpmver)) {
 	goto exit;
+    }
 
     rc = RPMRC_OK;
 
@@ -755,7 +778,7 @@ rpmRC packageBinaries(rpmSpec spec, const char *cookie, int cheating)
 
     for (pkg = spec->packages; pkg != NULL; pkg = pkg->next)
         npkgs++;
-    tasks = xcalloc(npkgs, sizeof(Package));
+    tasks = (Package *)xcalloc(npkgs, sizeof(Package));
 
     pkg = spec->packages;
     for (int i = 0; i < npkgs; i++) {
@@ -796,13 +819,11 @@ rpmRC packageSources(rpmSpec spec, char **cookie)
 {
     Package sourcePkg = spec->sourcePackage;
     rpmRC rc;
-    uint32_t one = 1;
 
     /* Add some cruft */
     headerPutString(sourcePkg->header, RPMTAG_RPMVERSION, VERSION);
     headerPutString(sourcePkg->header, RPMTAG_BUILDHOST, spec->buildHost);
     headerPutUint32(sourcePkg->header, RPMTAG_BUILDTIME, &(spec->buildTime), 1);
-    headerPutUint32(sourcePkg->header, RPMTAG_SOURCEPACKAGE, &one, 1);
 
     /* Include spec in parsed and expanded form */
     headerPutString(sourcePkg->header, RPMTAG_SPEC,
