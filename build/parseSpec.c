@@ -922,33 +922,26 @@ exit:
     return res;
 }
 
-struct sectname_s {
-    const char *name;
-    int section;
-    int required;
-};
-
 struct sectname_s sectList[] = {
-    { "prep", SECT_PREP, 0 },
-    { "conf", SECT_CONF, 1 },
-    { "generate_buildrequires", SECT_BUILDREQUIRES, 0 },
-    { "build", SECT_BUILD, 1 },
-    { "install", SECT_INSTALL, 1 },
-    { "check", SECT_CHECK, 0 },
-    { "clean", SECT_CLEAN, 0 },
-    { NULL, -1 }
+    { "prep", SECT_PREP, PART_PREP, 0 },
+    { "conf", SECT_CONF, PART_CONF, 1 },
+    { "generate_buildrequires", SECT_BUILDREQUIRES, PART_BUILDREQUIRES, 0 },
+    { "build", SECT_BUILD, PART_BUILD, 1 },
+    { "install", SECT_INSTALL, PART_INSTALL, 1 },
+    { "check", SECT_CHECK, PART_CHECK, 0 },
+    { "clean", SECT_CLEAN, PART_CLEAN, 0 },
+    { NULL, -1, -1, 0 }
 };
 
-int getSection(const char *name)
+const struct sectname_s *getSection(const char *name, int part)
 {
-    int sn = -1;
-    for (struct sectname_s *sc = sectList; sc->name; sc++) {
-	if (rstreq(name, sc->name)) {
-	    sn = sc->section;
-	    break;
-	}
+    for (const struct sectname_s *sc = sectList; sc->name; sc++) {
+	if (name && rstreq(name, sc->name))
+	    return sc;
+	if (part && part == sc->part)
+	    return sc;
     }
-    return sn;
+    return NULL;
 }
 
 int checkBuildsystem(rpmSpec spec, const char *name)
@@ -1046,6 +1039,32 @@ exit:
     return rc;
 }
 
+static rpmRC applyAppendPrepend(rpmSpec spec)
+{
+    for (struct sectname_s *sc = sectList; sc->name; sc++) {
+	ARGV_const_t sp = spec->sectionparts[sc->section];
+	if (sp) {
+	    int nparts = argvCount(sp);
+	    int *modes = argiData(spec->sectionops[sc->section]);
+	    StringBuf *sbp = &spec->sections[sc->section];
+	    if (*sbp == NULL)
+		*sbp = newStringBuf();
+	    for (int i = 0; i < nparts; i++) {
+		if (modes[i] == PARSE_APPEND) {
+		    appendStringBuf(*sbp, sp[i]);
+		} else if (modes[i] == PARSE_PREPEND) {
+		    StringBuf nbuf = newStringBuf();
+		    appendStringBuf(nbuf, sp[i]);
+		    appendStringBuf(nbuf, getStringBuf(*sbp));
+		    freeStringBuf(*sbp);
+		    *sbp = nbuf;
+		}
+	    }
+	}
+    }
+    return RPMRC_OK;
+}
+
 static rpmSpec parseSpec(const char *specFile, rpmSpecFlags flags,
 			 int recursing);
 
@@ -1059,6 +1078,26 @@ static int checkPart(int parsePart, enum parseStages stage) {
 	}
     }
     return 0;
+}
+
+static int parseBuildScript(rpmSpec spec, int part)
+{
+    const struct sectname_s *sc = getSection(NULL, part);
+    if (sc == NULL) /* can't happen */
+	return -1;
+
+    int mode = 0;
+    int rc = parseSimpleScript(spec, sc->name,
+				&spec->sections[sc->section],
+				&spec->sectionparts[sc->section],
+				&mode);
+
+    if (mode) {
+	int ix = argvCount(spec->sectionparts[sc->section]);
+	argiAdd(&spec->sectionops[sc->section], ix-1, mode);
+    }
+
+    return rc;
 }
 
 static rpmRC parseSpecSection(rpmSpec *specptr, enum parseStages stage)
@@ -1097,34 +1136,17 @@ static rpmRC parseSpecSection(rpmSpec *specptr, enum parseStages stage)
 	case PART_PREP:
 	    rpmPushMacroAux(NULL, "setup", "-", doSetupMacro, spec, -1, 0, 0);
 	    rpmPushMacroAux(NULL, "patch", "-", doPatchMacro, spec, -1, 0, 0);
-	    parsePart = parseSimpleScript(spec, "%prep",
-					&(spec->sections[SECT_PREP]));
+	    parsePart = parseBuildScript(spec, parsePart);
 	    rpmPopMacro(NULL, "patch");
 	    rpmPopMacro(NULL, "setup");
 	    break;
 	case PART_CONF:
-	    parsePart = parseSimpleScript(spec, "%conf",
-					&(spec->sections[SECT_CONF]));
-	    break;
 	case PART_BUILDREQUIRES:
-	    parsePart = parseSimpleScript(spec, "%generate_buildrequires",
-				      &(spec->sections[SECT_BUILDREQUIRES]));
-	    break;
 	case PART_BUILD:
-	    parsePart = parseSimpleScript(spec, "%build",
-					&(spec->sections[SECT_BUILD]));
-	    break;
 	case PART_INSTALL:
-	    parsePart = parseSimpleScript(spec, "%install",
-					&(spec->sections[SECT_INSTALL]));
-	    break;
 	case PART_CHECK:
-	    parsePart = parseSimpleScript(spec, "%check",
-					&(spec->sections[SECT_CHECK]));
-	    break;
 	case PART_CLEAN:
-	    parsePart = parseSimpleScript(spec, "%clean",
-					&(spec->sections[SECT_CLEAN]));
+	    parsePart = parseBuildScript(spec, parsePart);
 	    break;
 	case PART_CHANGELOG:
 	    parsePart = parseChangelog(spec);
@@ -1228,8 +1250,12 @@ static rpmRC parseSpecSection(rpmSpec *specptr, enum parseStages stage)
 	}
     }
 
-    if (stage == PARSE_SPECFILE && parseBuildsystem(spec))
-	goto errxit;
+    if (stage == PARSE_SPECFILE) {
+	if (parseBuildsystem(spec))
+	    goto errxit;
+	if (applyAppendPrepend(spec))
+	    goto errxit;
+    }
 
     /* Add arch for each package */
     addArch(spec);
