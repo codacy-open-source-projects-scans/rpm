@@ -4,6 +4,8 @@
 
 #include "system.h"
 
+#include <vector>
+
 #include <sys/file.h>
 #include <utime.h>
 #include <errno.h>
@@ -38,14 +40,8 @@
 #include "misc.h"
 #include "debug.h"
 
-#define HASHTYPE dbChk
-#define HTKEYTYPE unsigned int
-#define HTDATATYPE rpmRC
-#include "rpmhash.H"
-#include "rpmhash.C"
-#undef HASHTYPE
-#undef HTKEYTYPE
-#undef HTDATATYPE
+using std::unordered_map;
+using std::vector;
 
 static rpmdb rpmdbUnlink(rpmdb db);
 
@@ -91,16 +87,6 @@ static int buildIndexes(rpmdb db)
     return rc;
 }
 
-static int uintCmp(unsigned int a, unsigned int b)
-{
-    return (a != b);
-}
-
-static unsigned int uintId(unsigned int a)
-{
-    return a;
-}
-
 /** \ingroup dbi
  * Return (newly allocated) integer of the epoch.
  * @param s		version string optionally containing epoch number
@@ -144,10 +130,6 @@ static int pkgdbOpen(rpmdb db, int flags, dbiIndex *dbip)
 	int verifyonly = (flags & RPMDB_FLAG_VERIFYONLY);
 
 	db->db_pkgs = dbi;
-	/* Allocate header checking cache .. based on some random number */
-	if (!verifyonly && (db->db_checked == NULL)) {
-	    db->db_checked = dbChkCreate(567, uintId, uintCmp, NULL, NULL);
-	}
 	/* If primary got created, we can safely run without fsync */
 	if ((!verifyonly && (dbiFlags(dbi) & DBI_CREATED)) || db->cfg.db_no_fsync) {
 	    rpmlog(RPMLOG_DEBUG, "disabling fsync on database\n");
@@ -295,7 +277,7 @@ struct rpmdbIndexIterator_s {
     rpmDbiTag		ii_rpmtag;
     dbiCursor		ii_dbc;
     dbiIndexSet		ii_set;
-    unsigned int	*ii_hdrNums;
+    vector<unsigned>	ii_hdrNums;
     int			ii_skipdata;
 };
 
@@ -383,10 +365,9 @@ int rpmdbClose(rpmdb db)
     db->db_root = _free(db->db_root);
     db->db_home = _free(db->db_home);
     db->db_fullpath = _free(db->db_fullpath);
-    db->db_checked = dbChkFree(db->db_checked);
     db->db_indexes = _free(db->db_indexes);
 
-    db = _free(db);
+    delete db;
 
 exit:
     return rc;
@@ -425,7 +406,7 @@ static rpmdb newRpmdb(const char * root, const char * home,
 	return NULL;
     }
 
-    db = (rpmdb)xcalloc(sizeof(*db), 1);
+    db = new rpmdb_s {};
 
     if (!(perms & 0600)) perms = 0644;	/* XXX sanity */
 
@@ -977,7 +958,7 @@ rpmdbMatchIterator rpmdbFreeIterator(rpmdbMatchIterator mi)
     rpmdbClose(mi->mi_db);
     mi->mi_ts = rpmtsFree(mi->mi_ts);
 
-    mi = _free(mi);
+    delete mi;
 
     return NULL;
 }
@@ -1350,12 +1331,12 @@ static rpmRC miVerifyHeader(rpmdbMatchIterator mi, const void *uh, size_t uhlen)
 	return rpmrc;
 
     /* Don't bother re-checking a previously read header. */
-    if (mi->mi_db->db_checked) {
-	rpmRC *res;
-	if (dbChkGetEntry(mi->mi_db->db_checked, mi->mi_offset,
-			  &res, NULL, NULL)) {
-	    rpmrc = res[0];
-	}
+    int verifyonly = mi->mi_db->db_flags & RPMDB_FLAG_VERIFYONLY;
+    if (!verifyonly) {
+	auto const & db_checked = mi->mi_db->db_checked;
+	auto entry = db_checked.find(mi->mi_offset);
+	if (entry != db_checked.end())
+	    rpmrc = entry->second;
     }
 
     /* If blob is unchecked, check blob import consistency now. */
@@ -1371,8 +1352,8 @@ static rpmRC miVerifyHeader(rpmdbMatchIterator mi, const void *uh, size_t uhlen)
 	msg = _free(msg);
 
 	/* Mark header checked. */
-	if (mi->mi_db && mi->mi_db->db_checked) {
-	    dbChkAddEntry(mi->mi_db->db_checked, mi->mi_offset, rpmrc);
+	if (mi->mi_db && !verifyonly) {
+	    mi->mi_db->db_checked.insert({mi->mi_offset, rpmrc});
 	}
     }
     return rpmrc;
@@ -1589,7 +1570,7 @@ rpmdbMatchIterator rpmdbNewIterator(rpmdb db, rpmDbiTagVal dbitag)
 	    return NULL;
     }
 
-    mi = (rpmdbMatchIterator)xcalloc(1, sizeof(*mi));
+    mi = new rpmdbMatchIterator_s {};
     mi->mi_set = NULL;
     mi->mi_db = rpmdbLink(db);
     mi->mi_rpmtag = dbitag;
@@ -1793,7 +1774,7 @@ rpmdbIndexIterator rpmdbIndexIteratorInit(rpmdb db, rpmDbiTag rpmtag)
     if (indexOpen(db, rpmtag, 0, &dbi))
 	return NULL;
 
-    ii = (rpmdbIndexIterator)xcalloc(1, sizeof(*ii));
+    ii = new rpmdbIndexIterator_s {};
     ii->ii_db = rpmdbLink(db);
     ii->ii_rpmtag = rpmtag;
     ii->ii_dbi = dbi;
@@ -1894,20 +1875,15 @@ unsigned int rpmdbIndexIteratorPkgOffset(rpmdbIndexIterator ii, unsigned int nr)
 
 const unsigned int *rpmdbIndexIteratorPkgOffsets(rpmdbIndexIterator ii)
 {
-    int i;
-
     if (!ii || !ii->ii_set)
 	return NULL;
 
-    if (ii->ii_hdrNums)
-	ii->ii_hdrNums = _free(ii->ii_hdrNums);
-
-    ii->ii_hdrNums = (unsigned int *)xmalloc(sizeof(*ii->ii_hdrNums) * ii->ii_set->count);
-    for (i = 0; i < ii->ii_set->count; i++) {
+    ii->ii_hdrNums.resize(ii->ii_set->count);
+    for (int i = 0; i < ii->ii_set->count; i++) {
 	ii->ii_hdrNums[i] = ii->ii_set->recs[i].hdrNum;
     }
 
-    return ii->ii_hdrNums;
+    return ii->ii_hdrNums.data();
 }
 
 unsigned int rpmdbIndexIteratorTagNum(rpmdbIndexIterator ii, unsigned int nr)
@@ -1929,10 +1905,7 @@ rpmdbIndexIterator rpmdbIndexIteratorFree(rpmdbIndexIterator ii)
     rpmdbClose(ii->ii_db);
     ii->ii_set = dbiIndexSetFree(ii->ii_set);
 
-    if (ii->ii_hdrNums)
-	ii->ii_hdrNums = _free(ii->ii_hdrNums);
-
-    ii = _free(ii);
+    delete ii;
     return NULL;
 }
 
@@ -2247,8 +2220,8 @@ int rpmdbAdd(rpmdb db, Header h)
     if (ret == 0) {
 	headerSetInstance(h, hdrNum);
 	/* Purge our verification cache on added public keys */
-	if (db->db_checked && headerIsEntry(h, RPMTAG_PUBKEYS)) {
-	    dbChkEmpty(db->db_checked);
+	if (headerIsEntry(h, RPMTAG_PUBKEYS)) {
+	    db->db_checked.clear();
 	}
     }
 

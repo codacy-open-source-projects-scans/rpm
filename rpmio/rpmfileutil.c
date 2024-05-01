@@ -1,5 +1,8 @@
 #include "system.h"
 
+#include <filesystem>
+#include <vector>
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -18,6 +21,8 @@
 
 #include "debug.h"
 
+namespace fs = std::filesystem;
+
 static const char *rpm_config_dir = NULL;
 static pthread_once_t configDirSet = PTHREAD_ONCE_INIT;
 
@@ -25,14 +30,14 @@ int rpmDoDigest(int algo, const char * fn,int asAscii, unsigned char * digest)
 {
     unsigned char * dig = NULL;
     size_t diglen, buflen = 32 * BUFSIZ;
-    unsigned char *buf = (unsigned char *)xmalloc(buflen);
+    std::vector<uint8_t> buf(buflen);
     int rc = 0;
 
     FD_t fd = Fopen(fn, "r.ufdio");
 
     if (fd) {
 	fdInitDigest(fd, algo, 0);
-	while ((rc = Fread(buf, sizeof(*buf), buflen, fd)) > 0) {};
+	while ((rc = Fread(buf.data(), 1, buflen, fd)) > 0) {};
 	fdFiniDigest(fd, algo, (void **)&dig, &diglen, asAscii);
     }
 
@@ -43,7 +48,6 @@ int rpmDoDigest(int algo, const char * fn,int asAscii, unsigned char * digest)
     }
 
     dig = _free(dig);
-    free(buf);
     Fclose(fd);
 
     return rc;
@@ -441,16 +445,9 @@ int rpmFileHasSuffix(const char *path, const char *suffix)
 
 char * rpmGetCwd(void)
 {
-    int currDirLen = 0;
-    char * currDir = NULL;
-
-    do {
-	currDirLen += 128;
-	currDir = xrealloc(currDir, currDirLen);
-	memset(currDir, 0, currDirLen);
-    } while (getcwd(currDir, currDirLen) == NULL && errno == ERANGE);
-
-    return currDir;
+    std::error_code ec;
+    auto currDir = fs::current_path(ec);
+    return ec ? NULL : xstrdup(currDir.c_str());;
 }
 
 int rpmMkdirs(const char *root, const char *pathstr)
