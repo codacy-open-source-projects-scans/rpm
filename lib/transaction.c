@@ -4,6 +4,8 @@
 
 #include "system.h"
 
+#include <set>
+
 #include <inttypes.h>
 #include <libgen.h>
 #include <errno.h>
@@ -1001,23 +1003,6 @@ static void skipInstallFiles(const rpmts ts, rpmfiles files, rpmfs fs)
     rpmfiFree(fi);
 }
 
-#define HASHTYPE rpmStringSet
-#define HTKEYTYPE rpmsid
-#include "rpmhash.H"
-#include "rpmhash.C"
-#undef HASHTYPE
-#undef HTKEYTYPE
-
-static unsigned int sidHash(rpmsid sid)
-{
-    return sid;
-}
-
-static int sidCmp(rpmsid a, rpmsid b)
-{
-    return (a != b);
-}
-
 /* Get a rpmdbMatchIterator containing all files in
  * the rpmdb that share the basename with one from
  * the transaction.
@@ -1037,15 +1022,13 @@ rpmdbMatchIterator rpmFindBaseNamesInDB(rpmts ts, uint64_t fileCount)
     int oc = 0;
     const char * baseName;
     rpmsid baseNameId;
-
-    rpmStringSet baseNames = rpmStringSetCreate(fileCount, 
-					sidHash, sidCmp, NULL);
+    std::set<rpmsid> baseNames;
 
     mi = rpmdbNewIterator(rpmtsGetRdb(ts), RPMDBI_BASENAMES);
 
     pi = rpmtsiInit(ts);
     while ((p = rpmtsiNext(pi, 0)) != NULL) {
-	rpmtsNotify(ts, NULL, RPMCALLBACK_TRANS_PROGRESS, oc++, tsmem->orderCount);
+	rpmtsNotify(ts, NULL, RPMCALLBACK_TRANS_PROGRESS, oc++, tsmem->order.size());
 
 	/* Gather all installed headers with matching basename's. */
 	files = rpmteFiles(p);
@@ -1054,8 +1037,7 @@ rpmdbMatchIterator rpmFindBaseNamesInDB(rpmts ts, uint64_t fileCount)
 	    size_t keylen;
 
 	    baseNameId = rpmfiBNId(fi);
-
-	    if (rpmStringSetHasEntry(baseNames, baseNameId))
+	    if (baseNames.find(baseNameId) != baseNames.end())
 		continue;
 
 	    keylen = rpmstrPoolStrlen(tspool, baseNameId);
@@ -1063,13 +1045,12 @@ rpmdbMatchIterator rpmFindBaseNamesInDB(rpmts ts, uint64_t fileCount)
 	    if (keylen == 0)
 		keylen++;	/* XXX "/" fixup. */
 	    rpmdbExtendIterator(mi, baseName, keylen);
-	    rpmStringSetAddEntry(baseNames, baseNameId);
+	    baseNames.insert(baseNameId);
 	}
 	rpmfiFree(fi);
 	rpmfilesFree(files);
     }
     rpmtsiFree(pi);
-    rpmStringSetFree(baseNames);
 
     rpmdbSortIterator(mi);
     /* iterator is now sorted by (recnum, filenum) */
@@ -1117,14 +1098,13 @@ void checkInstalledFiles(rpmts ts, uint64_t fileCount, fingerPrintCache fpc)
 	unsigned int installedPkg;
 	int beingRemoved = 0;
 	rpmfiles otherFi = NULL;
-	rpmte *removedPkg = NULL;
 
 	/* Is this package being removed? */
 	installedPkg = rpmdbGetIteratorOffset(mi);
-	if (packageHashGetEntry(tsmem->removedPackages, installedPkg,
-				&removedPkg, NULL, NULL)) {
+	auto it = tsmem->removedPackages.find(installedPkg);
+	if (it != tsmem->removedPackages.end()) {
 	    beingRemoved = 1;
-	    otherFi = rpmteFiles(removedPkg[0]);
+	    otherFi = rpmteFiles(it->second);
 	}
 
 	h = headerLink(h);
@@ -1554,7 +1534,7 @@ static int rpmtsPrepare(rpmts ts)
 	goto exit;
     }
     
-    rpmtsNotify(ts, NULL, RPMCALLBACK_TRANS_START, 6, tsmem->orderCount);
+    rpmtsNotify(ts, NULL, RPMCALLBACK_TRANS_START, 6, tsmem->order.size());
     /* Add fingerprint for each file not skipped. */
     fpCachePopulate(fpc, ts, fileCount);
     /* check against files in the rpmdb */
@@ -1595,7 +1575,7 @@ static int rpmtsPrepare(rpmts ts)
 	rpmfilesFree(files);
     }
     rpmtsiFree(pi);
-    rpmtsNotify(ts, NULL, RPMCALLBACK_TRANS_STOP, 6, tsmem->orderCount);
+    rpmtsNotify(ts, NULL, RPMCALLBACK_TRANS_STOP, 6, tsmem->order.size());
 
     /* return from chroot if done earlier */
     if (rpmChrootOut())

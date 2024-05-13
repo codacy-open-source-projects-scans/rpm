@@ -1,6 +1,8 @@
 #ifndef _RPMTS_INTERNAL_H
 #define _RPMTS_INTERNAL_H
 
+#include <vector>
+
 #include <rpm/rpmts.h>
 #include <rpm/rpmstrpool.h>
 
@@ -21,22 +23,8 @@ typedef struct tsMembers_s {
     rpmal addedPackages;	/*!< Set of packages being installed. */
 
     rpmds rpmlib;		/*!< rpmlib() dependency set. */
-    rpmte * order;		/*!< Packages sorted by dependencies. */
-    int orderCount;		/*!< No. of transaction elements. */
-    int orderAlloced;		/*!< No. of allocated transaction elements. */
-    int delta;			/*!< Delta for reallocation. */
+    std::vector<rpmte> order;	/*!< Packages sorted by dependencies. */
 } * tsMembers;
-
-typedef struct tsTrigger_s {
-    unsigned int hdrNum;
-    int index;
-} tsTrigger;
-
-typedef struct tsTriggers_s {
-    tsTrigger *trigger;
-    int count;
-    int alloced;
-} tsTriggers;
 
 /** \ingroup rpmts
  * The set of packages to be installed/removed atomically.
@@ -96,10 +84,6 @@ struct rpmts_s {
     time_t overrideTime;	/*!< Time value used when overriding system clock. */
 };
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /** \ingroup rpmts
  * Return transaction global string pool handle, creating the pool if needed.
  * @param ts		transaction set
@@ -141,7 +125,4 @@ int rpmtsNotifyChange(rpmts ts, int event, rpmte te, rpmte other);
 RPM_GNUC_INTERNAL
 rpm_time_t rpmtsGetTime(rpmts ts, time_t step);
 
-#ifdef __cplusplus
-}
-#endif
 #endif /* _RPMTS_INTERNAL_H */

@@ -422,7 +422,8 @@ exit:
     return specFinal;
 }
 
-static int buildForTarget(rpmts ts, const char * arg, BTA_t ba)
+static int buildForTarget(rpmts ts, const char * arg, BTA_t ba,
+			  ARGV_t *specarch)
 {
     int buildAmount = ba->buildAmount;
     char * buildRootURL = NULL;
@@ -512,6 +513,21 @@ static int buildForTarget(rpmts ts, const char * arg, BTA_t ba)
 	goto exit;
     }
 
+    if (specarch) {
+	Header h = rpmSpecSourceHeader(spec);
+	const char *buildarch = headerGetString(h, RPMTAG_ARCH);
+	const char *arch = NULL;
+
+	rpmGetArchInfo(&arch, NULL);
+
+	/* if spec buildarch differs from current arch, request a reparse */
+	if (strcmp(arch, buildarch)) {
+	    rc = -1;
+	    argvAdd(specarch, buildarch);
+	    goto exit;
+	}
+    }
+
     /* Create build tree if necessary */
     if (rpmMkdirs(root, "%{_topdir}:%{_builddir}:%{_rpmdir}:%{_srcrpmdir}"))
 	goto exit;
@@ -520,11 +536,11 @@ static int buildForTarget(rpmts ts, const char * arg, BTA_t ba)
 	goto exit;
     }
     
-    if (buildMode == 't')
-	(void) unlink(specFile);
     rc = 0;
 
 exit:
+    if (buildMode == 't')
+	(void) unlink(specFile);
     free(specFile);
     rpmSpecFree(spec);
     free(buildRootURL);
@@ -534,23 +550,25 @@ exit:
 static int build(rpmts ts, const char * arg, BTA_t ba, const char * rcfile)
 {
     int rc = 0;
-    char * targets = argvJoin(build_targets, ",");
 #define	buildCleanMask	(RPMBUILD_RMSOURCE|RPMBUILD_RMSPEC)
     int cleanFlags = ba->buildAmount & buildCleanMask;
     rpmVSFlags vsflags, ovsflags;
+    char *targets = NULL;
 
     vsflags = rpmExpandNumeric("%{_vsflags_build}");
     vsflags |= rpmcliVSFlags;
     ovsflags = rpmtsSetVSFlags(ts, vsflags);
 
     if (build_targets == NULL) {
-	rc =  buildForTarget(ts, arg, ba);
-	goto exit;
+	rc = buildForTarget(ts, arg, ba, &build_targets);
+	if (rc >= 0)
+	    goto exit;
     }
 
     /* parse up the build operators */
-
-    fprintf(stderr, _("Building target platforms: %s\n"), targets);
+    targets = argvJoin(build_targets, ",");
+    if (!quiet)
+	fprintf(stderr, _("Building target platforms: %s\n"), targets);
 
     ba->buildAmount &= ~buildCleanMask;
     for (ARGV_const_t target = build_targets; target && *target; target++) {
@@ -558,7 +576,8 @@ static int build(rpmts ts, const char * arg, BTA_t ba, const char * rcfile)
 	if (*(target + 1) == NULL)
 	    ba->buildAmount |= cleanFlags;
 
-	fprintf(stderr, _("Building for target %s\n"), *target);
+	if (!quiet)
+	    fprintf(stderr, _("Building for target %s\n"), *target);
 
 	/* Read in configuration for target. */
 	rpmFreeMacros(NULL);
@@ -568,7 +587,7 @@ static int build(rpmts ts, const char * arg, BTA_t ba, const char * rcfile)
 	}
 	rpmFreeRpmrc();
 	(void) rpmReadConfigFiles(rcfile, *target);
-	rc = buildForTarget(ts, arg, ba);
+	rc = buildForTarget(ts, arg, ba, NULL);
 	if (rc)
 	    break;
     }

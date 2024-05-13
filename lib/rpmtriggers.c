@@ -5,6 +5,7 @@
 #include <rpm/rpmds.h>
 #include <rpm/rpmfi.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "rpmtriggers.h"
 #include "rpmts_internal.h"
@@ -18,7 +19,7 @@
 
 rpmtriggers rpmtriggersCreate(unsigned int hint)
 {
-    rpmtriggers triggers = (rpmtriggers)xmalloc(sizeof(struct rpmtriggers_s));
+    rpmtriggers triggers = new rpmtriggers_s {};
     triggers->count = 0;
     triggers->alloced = hint;
     triggers->triggerInfo = (struct triggerInfo_s *)xmalloc(sizeof(struct triggerInfo_s) *
@@ -29,7 +30,7 @@ rpmtriggers rpmtriggersCreate(unsigned int hint)
 rpmtriggers rpmtriggersFree(rpmtriggers triggers)
 {
     _free(triggers->triggerInfo);
-    _free(triggers);
+    delete triggers;
 
     return NULL;
 }
@@ -211,7 +212,7 @@ typedef struct matchFilesIter_s {
     const char *pfx;
     const char *pkgname;
     rpmdbMatchIterator pi;
-    packageHash tranPkgs;
+    packageHash *tranPkgs;
 } *matchFilesIter;
 
 /*
@@ -221,7 +222,7 @@ typedef struct matchFilesIter_s {
 static rpmfiles rpmtsNextFiles(matchFilesIter mfi)
 {
     Header h;
-    rpmte *te;
+    rpmte te = NULL;
     rpmfiles files = NULL;
     rpmstrPool pool = mfi->ts->members->pool;
     int ix;
@@ -229,23 +230,26 @@ static rpmfiles rpmtsNextFiles(matchFilesIter mfi)
 
     ix = rpmdbGetIteratorIndex(mfi->pi);
     if (ix < rpmdbGetIteratorCount(mfi->pi)) {
+	tsMembers tsmem = mfi->ts->members;
 	offset = rpmdbGetIteratorOffsetFor(mfi->pi, ix);
-	if (packageHashGetEntry(mfi->ts->members->removedPackages, offset,
-				&te, NULL, NULL)) {
+	auto it = tsmem->removedPackages.find(offset);
+	if (it != tsmem->removedPackages.end()) {
 	    /* Files are available in memory */
-	    files  = rpmteFiles(te[0]);
+	    te = it->second;
+	    files  = rpmteFiles(te);
 	}
 
-	if (packageHashGetEntry(mfi->ts->members->installedPackages, offset,
-				&te, NULL, NULL)) {
+	it = tsmem->installedPackages.find(offset);
+	if (it != tsmem->installedPackages.end()) {
 	    /* Files are available in memory */
-	    files  = rpmteFiles(te[0]);
+	    te = it->second;
+	    files  = rpmteFiles(te);
 	}
     }
 
     if (files) {
 	rpmdbSetIteratorIndex(mfi->pi, ix + 1);
-	mfi->pkgname = rpmteN(te[0]);
+	mfi->pkgname = rpmteN(te);
     } else {
 	/* Files are not available in memory. Read them from rpmdb */
 	h = rpmdbNextIterator(mfi->pi);
@@ -261,7 +265,7 @@ static rpmfiles rpmtsNextFiles(matchFilesIter mfi)
 
 static matchFilesIter matchFilesIterator(rpmds trigger, rpmfiles files, rpmte te)
 {
-    matchFilesIter mfi = (matchFilesIter)xcalloc(1, sizeof(*mfi));
+    matchFilesIter mfi = new matchFilesIter_s {};
     rpmdsInit(trigger);
     mfi->rpmdsTrigger = trigger;
     mfi->files = rpmfilesLink(files);
@@ -272,7 +276,7 @@ static matchFilesIter matchFilesIterator(rpmds trigger, rpmfiles files, rpmte te
 static matchFilesIter matchDBFilesIterator(rpmds trigger, rpmts ts,
 					    int inTransaction)
 {
-    matchFilesIter mfi = (matchFilesIter)xcalloc(1, sizeof(*mfi));
+    matchFilesIter mfi = new matchFilesIter_s {};
     rpmsenseFlags sense;
 
     rpmdsSetIx(trigger, 0);
@@ -285,9 +289,9 @@ static matchFilesIter matchDBFilesIterator(rpmds trigger, rpmts ts,
     /* If inTransaction is set then filter out packages that aren't in transaction */
     if (inTransaction) {
 	if (sense & RPMSENSE_TRIGGERIN)
-	    mfi->tranPkgs = ts->members->installedPackages;
+	    mfi->tranPkgs = &ts->members->installedPackages;
 	else
-	    mfi->tranPkgs = ts->members->removedPackages;
+	    mfi->tranPkgs = &ts->members->removedPackages;
     }
     return mfi;
 }
@@ -342,7 +346,8 @@ static const char *matchFilesNext(matchFilesIter mfi)
 	    mfi->pi = rpmdbInitPrefixIterator(rpmtsGetRdb(mfi->ts),
 						RPMDBI_DIRNAMES, mfi->pfx, 0);
 
-	    rpmdbFilterIterator(mfi->pi, mfi->tranPkgs, 0);
+	    if (mfi->tranPkgs)
+		rpmdbFilterIterator(mfi->pi, *(mfi->tranPkgs), 0);
 	    /* Only walk through each header with matches once */
 	    rpmdbUniqIterator(mfi->pi);
 
@@ -375,7 +380,7 @@ static matchFilesIter matchFilesIteratorFree(matchFilesIter mfi)
     rpmfiFree(mfi->fi);
     rpmfilesFree(mfi->files);
     rpmdbFreeIterator(mfi->pi);
-    free(mfi);
+    delete mfi;
     return NULL;
 }
 
@@ -495,6 +500,11 @@ static int matchFilesInTran(rpmts ts, rpmte te, const char *pfx,
     rpmdbFreeIterator(pi);
 
     return rc;
+}
+
+static bool packageHashHasEntry(packageHash & pkghash, unsigned int entry)
+{
+    return pkghash.find(entry) != pkghash.end();
 }
 
 rpmRC runFileTriggers(rpmts ts, rpmte te, int arg2, rpmsenseFlags sense,

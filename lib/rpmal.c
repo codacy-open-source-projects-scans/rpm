@@ -4,6 +4,7 @@
 
 #include "system.h"
 
+#include <unordered_map>
 
 #include <rpm/rpmte.h>
 #include <rpm/rpmfi.h>
@@ -19,7 +20,6 @@
 
 #include "debug.h"
 
-typedef struct availablePackage_s * availablePackage;
 typedef int rpmalNum;
 
 /** \ingroup rpmdep
@@ -40,42 +40,24 @@ typedef struct availableIndexEntry_s {
     unsigned int entryIx;	/*!< Dependency index. */
 } * availableIndexEntry;
 
-#define HASHTYPE rpmalDepHash
-#define HTKEYTYPE rpmsid
-#define HTDATATYPE struct availableIndexEntry_s
-#include "rpmhash.H"
-#include "rpmhash.C"
-#undef HASHTYPE
-#undef HTKEYTYPE
-#undef HTDATATYPE
-
 typedef struct availableIndexFileEntry_s {
     rpmsid dirName;
     rpmalNum pkgNum;	        /*!< Containing package index. */
     unsigned int entryIx;	/*!< Dependency index. */
 } * availableIndexFileEntry;
 
-#define HASHTYPE rpmalFileHash
-#define HTKEYTYPE rpmsid
-#define HTDATATYPE struct availableIndexFileEntry_s
-#include "rpmhash.H"
-#include "rpmhash.C"
-#undef HASHTYPE
-#undef HTKEYTYPE
-#undef HTDATATYPE
+typedef std::unordered_multimap<rpmsid,availableIndexEntry_s> rpmalDepHash;
+typedef std::unordered_multimap<rpmsid,availableIndexFileEntry_s> rpmalFileHash;
 
 /** \ingroup rpmdep
  * Set of available packages, items, and directories.
  */
 struct rpmal_s {
     rpmstrPool pool;		/*!< String pool */
-    availablePackage list;	/*!< Set of packages. */
-    rpmalDepHash providesHash;
-    rpmalDepHash obsoletesHash;
-    rpmalFileHash fileHash;
-    int delta;			/*!< Delta for pkg list reallocation. */
-    int size;			/*!< No. of pkgs in list. */
-    int alloced;		/*!< No. of pkgs allocated for list. */
+    std::vector<availablePackage_s> list;/*!< Set of packages. */
+    rpmalDepHash *providesHash;
+    rpmalDepHash *obsoletesHash;
+    rpmalFileHash *fileHash;
     rpmtransFlags tsflags;	/*!< Transaction control flags. */
     rpm_color_t tscolor;	/*!< Transaction color. */
     rpm_color_t prefcolor;	/*!< Transaction preferred color. */
@@ -88,25 +70,17 @@ struct rpmal_s {
  */
 static void rpmalFreeIndex(rpmal al)
 {
-    al->providesHash = rpmalDepHashFree(al->providesHash);
-    al->obsoletesHash = rpmalDepHashFree(al->obsoletesHash);
-    al->fileHash = rpmalFileHashFree(al->fileHash);
+    delete al->providesHash;
+    delete al->obsoletesHash;
+    delete al->fileHash;
     al->fpc = fpCacheFree(al->fpc);
 }
 
 rpmal rpmalCreate(rpmts ts, int delta)
 {
-    rpmal al = (rpmal)xcalloc(1, sizeof(*al));
+    rpmal al = new rpmal_s {};
 
     al->pool = rpmstrPoolLink(rpmtsPool(ts));
-    al->delta = delta;
-    al->size = 0;
-    al->alloced = al->delta;
-    al->list = (availablePackage)xmalloc(sizeof(*al->list) * al->alloced);
-
-    al->providesHash = NULL;
-    al->obsoletesHash = NULL;
-    al->fileHash = NULL;
     al->tsflags = rpmtsFlags(ts);
     al->tscolor = rpmtsColor(ts);
     al->prefcolor = rpmtsPrefColor(ts);
@@ -116,57 +90,35 @@ rpmal rpmalCreate(rpmts ts, int delta)
 
 rpmal rpmalFree(rpmal al)
 {
-    availablePackage alp;
-    int i;
-
     if (al == NULL)
 	return NULL;
 
-    if ((alp = al->list) != NULL)
-    for (i = 0; i < al->size; i++, alp++) {
-	alp->obsoletes = rpmdsFree(alp->obsoletes);
-	alp->provides = rpmdsFree(alp->provides);
-	alp->fi = rpmfilesFree(alp->fi);
+    for (auto & alp : al->list) {
+	rpmdsFree(alp.obsoletes);
+	rpmdsFree(alp.provides);
+	rpmfilesFree(alp.fi);
     }
     al->pool = rpmstrPoolFree(al->pool);
-    al->list = _free(al->list);
-    al->alloced = 0;
 
     rpmalFreeIndex(al);
-    al = _free(al);
+    delete al;
     return NULL;
-}
-
-static unsigned int sidHash(rpmsid sid)
-{
-    return sid;
-}
-
-static int sidCmp(rpmsid a, rpmsid b)
-{
-    return (a != b);
 }
 
 void rpmalDel(rpmal al, rpmte p)
 {
-    availablePackage alp;
-    rpmalNum pkgNum;
-
-    if (al == NULL || al->list == NULL)
+    if (al == NULL)
 	return;		/* XXX can't happen */
 
     // XXX use a search for self provide
-    for (pkgNum=0; pkgNum<al->size; pkgNum++) {
-	if (al->list[pkgNum].p == p) {
+    for (auto & alp : al->list) {
+	// do not actually delete, just set p to NULL
+	// and later filter that out of the results
+	if (alp.p == p) {
+	    alp.p = NULL;
 	    break;
 	}
     }
-    if (pkgNum == al->size ) return; // Not found!
-
-    alp = al->list + pkgNum;
-    // do not actually delete, just set p to NULL
-    // and later filter that out of the results
-    alp->p = NULL;
 }
 
 static void rpmalAddFiles(rpmal al, rpmalNum pkgNum, rpmfiles fi)
@@ -194,7 +146,7 @@ static void rpmalAddFiles(rpmal al, rpmalNum pkgNum, rpmfiles fi)
 	fileEntry.dirName = rpmfilesDNId(fi, rpmfilesDI(fi, i));
 	fileEntry.entryIx = i;
 
-	rpmalFileHashAddEntry(al->fileHash, rpmfilesBNId(fi, i), fileEntry);
+	al->fileHash->insert({rpmfilesBNId(fi, i), fileEntry});
     }
 }
 
@@ -218,8 +170,7 @@ static void rpmalAddProvides(rpmal al, rpmalNum pkgNum, rpmds provides)
 	    continue;
 
 	indexEntry.entryIx = i;;
-	rpmalDepHashAddEntry(al->providesHash,
-				  rpmdsNIdIndex(provides, i), indexEntry);
+	al->providesHash->insert({rpmdsNIdIndex(provides, i), indexEntry});
     }
 }
 
@@ -238,103 +189,87 @@ static void rpmalAddObsoletes(rpmal al, rpmalNum pkgNum, rpmds obsoletes)
             continue;
 
 	indexEntry.entryIx = i;;
-	rpmalDepHashAddEntry(al->obsoletesHash,
-				  rpmdsNIdIndex(obsoletes, i), indexEntry);
+	al->obsoletesHash->insert({rpmdsNIdIndex(obsoletes, i), indexEntry});
     }
 }
 
 void rpmalAdd(rpmal al, rpmte p)
 {
-    rpmalNum pkgNum;
-    availablePackage alp;
-
     /* Source packages don't provide anything to depsolving */
     if (rpmteIsSource(p))
 	return;
 
-    if (al->size == al->alloced) {
-	al->alloced += al->delta;
-	al->list = xrealloc(al->list, sizeof(*al->list) * al->alloced);
-    }
-    pkgNum = al->size++;
+    rpmalNum pkgNum = al->list.size();
 
-    alp = al->list + pkgNum;
+    availablePackage_s alp = {
+	.p = p,
+	.provides = rpmdsLink(rpmteDS(p, RPMTAG_PROVIDENAME)),
+	.obsoletes = rpmdsLink(rpmteDS(p, RPMTAG_OBSOLETENAME)),
+	.fi = rpmteFiles(p),
+    };
 
-    alp->p = p;
-
-    alp->provides = rpmdsLink(rpmteDS(p, RPMTAG_PROVIDENAME));
-    alp->obsoletes = rpmdsLink(rpmteDS(p, RPMTAG_OBSOLETENAME));
-    alp->fi = rpmteFiles(p);
+    al->list.push_back(alp);
 
     /* Try to be lazy as delayed hash creation is cheaper */
     if (al->providesHash != NULL)
-	rpmalAddProvides(al, pkgNum, alp->provides);
+	rpmalAddProvides(al, pkgNum, alp.provides);
     if (al->obsoletesHash != NULL)
-	rpmalAddObsoletes(al, pkgNum, alp->obsoletes);
+	rpmalAddObsoletes(al, pkgNum, alp.obsoletes);
     if (al->fileHash != NULL)
-	rpmalAddFiles(al, pkgNum, alp->fi);
+	rpmalAddFiles(al, pkgNum, alp.fi);
 }
 
 static void rpmalMakeFileIndex(rpmal al)
 {
-    availablePackage alp;
-    int i, fileCnt = 0;
+    int fileCnt = 0;
 
-    for (i = 0; i < al->size; i++) {
-	alp = al->list + i;
-	if (alp->fi != NULL)
-	    fileCnt += rpmfilesFC(alp->fi);
+    for (auto const & alp : al->list) {
+	if (alp.fi != NULL)
+	    fileCnt += rpmfilesFC(alp.fi);
     }
-    al->fileHash = rpmalFileHashCreate(fileCnt/4+128,
-				       sidHash, sidCmp, NULL, NULL);
-    for (i = 0; i < al->size; i++) {
-	alp = al->list + i;
-	rpmalAddFiles(al, i, alp->fi);
+    al->fileHash = new rpmalFileHash(fileCnt/4+128);
+    int i = 0;
+    for (auto const & alp : al->list) {
+	rpmalAddFiles(al, i++, alp.fi);
     }
 }
 
 static void rpmalMakeProvidesIndex(rpmal al)
 {
-    availablePackage alp;
-    int i, providesCnt = 0;
+    int providesCnt = 0;
 
-    for (i = 0; i < al->size; i++) {
-	alp = al->list + i;
-	providesCnt += rpmdsCount(alp->provides);
+    for (auto const & alp : al->list) {
+	providesCnt += rpmdsCount(alp.provides);
     }
 
-    al->providesHash = rpmalDepHashCreate(providesCnt/4+128,
-					       sidHash, sidCmp, NULL, NULL);
-    for (i = 0; i < al->size; i++) {
-	alp = al->list + i;
-	rpmalAddProvides(al, i, alp->provides);
+    al->providesHash = new rpmalDepHash(providesCnt/4+128);
+
+    int i = 0;
+    for (auto const & alp : al->list) {
+	rpmalAddProvides(al, i++, alp.provides);
     }
 }
 
 static void rpmalMakeObsoletesIndex(rpmal al)
 {
-    availablePackage alp;
-    int i, obsoletesCnt = 0;
+    int obsoletesCnt = 0;
 
-    for (i = 0; i < al->size; i++) {
-	alp = al->list + i;
-	obsoletesCnt += rpmdsCount(alp->obsoletes);
+    for (auto const & alp : al->list) {
+	obsoletesCnt += rpmdsCount(alp.obsoletes);
     }
 
-    al->obsoletesHash = rpmalDepHashCreate(obsoletesCnt/4+128,
-					       sidHash, sidCmp, NULL, NULL);
-    for (i = 0; i < al->size; i++) {
-	alp = al->list + i;
-	rpmalAddObsoletes(al, i, alp->obsoletes);
+    al->obsoletesHash = new rpmalDepHash(obsoletesCnt/4+128);
+
+    int i = 0;
+    for (auto const & alp : al->list) {
+	rpmalAddObsoletes(al, i++, alp.obsoletes);
     }
 }
 
-rpmte * rpmalAllObsoletes(rpmal al, rpmds ds)
+std::vector<rpmte> rpmalAllObsoletes(rpmal al, rpmds ds)
 {
-    rpmte * ret = NULL;
+    std::vector<rpmte> ret;
     rpmsid nameId;
-    availableIndexEntry result;
-    int resultCnt;
 
     if (al == NULL || ds == NULL || (nameId = rpmdsNId(ds)) == 0)
 	return ret;
@@ -342,50 +277,34 @@ rpmte * rpmalAllObsoletes(rpmal al, rpmds ds)
     if (al->obsoletesHash == NULL)
 	rpmalMakeObsoletesIndex(al);
 
-    rpmalDepHashGetEntry(al->obsoletesHash, nameId, &result, &resultCnt, NULL);
+    auto range = al->obsoletesHash->equal_range(nameId);
+    for (auto it = range.first; it != range.second; ++it) {
+	auto & alp = al->list[it->second.pkgNum];
+	if (alp.p == NULL) // deleted
+	    continue;
 
-    if (resultCnt > 0) {
-	availablePackage alp;
-	int rc, found = 0;
+	int rc = rpmdsCompareIndex(alp.obsoletes, it->second.entryIx,
+			       ds, rpmdsIx(ds));
 
-	ret = (rpmte *)xmalloc((resultCnt+1) * sizeof(*ret));
-
-	for (int i = 0; i < resultCnt; i++) {
-	    alp = al->list + result[i].pkgNum;
-	    if (alp->p == NULL) // deleted
-		continue;
-
-	    rc = rpmdsCompareIndex(alp->obsoletes, result[i].entryIx,
-				   ds, rpmdsIx(ds));
-
-	    if (rc) {
-		rpmdsNotify(ds, "(added obsolete)", 0);
-		ret[found] = alp->p;
-		found++;
-	    }
+	if (rc) {
+	    rpmdsNotify(ds, "(added obsolete)", 0);
+	    ret.push_back(alp.p);
 	}
-
-	if (found)
-	    ret[found] = NULL;
-	else
-	    ret = _free(ret);
     }
 
     return ret;
 }
 
-static rpmte * rpmalAllFileSatisfiesDepend(const rpmal al, const char *fileName, const rpmds filterds)
+static std::vector<rpmte> rpmalAllFileSatisfiesDepend(const rpmal al, const char *fileName, const rpmds filterds)
 {
     const char *slash; 
-    rpmte * ret = NULL;
+    std::vector<rpmte> ret;
 
     if (al == NULL || fileName == NULL || *fileName != '/')
-	return NULL;
+	return ret;
 
     /* Split path into dirname and basename components for lookup */
     if ((slash = strrchr(fileName, '/')) != NULL) {
-	availableIndexFileEntry result;
-	int resultCnt = 0;
 	size_t bnStart = (slash - fileName) + 1;
 	rpmsid baseName;
 
@@ -394,56 +313,47 @@ static rpmte * rpmalAllFileSatisfiesDepend(const rpmal al, const char *fileName,
 
 	baseName = rpmstrPoolId(al->pool, fileName + bnStart, 0);
 	if (!baseName)
-	    return NULL;	/* no match possible */
+	    return ret;	/* no match possible */
 
-	rpmalFileHashGetEntry(al->fileHash, baseName, &result, &resultCnt, NULL);
-
-	if (resultCnt > 0) {
-	    int i, found;
-	    ret = (rpmte *)xmalloc((resultCnt+1) * sizeof(*ret));
+	auto range = al->fileHash->equal_range(baseName);
+	if (range.first != range.second) {
 	    fingerPrint * fp = NULL;
 	    rpmsid dirName = rpmstrPoolIdn(al->pool, fileName, bnStart, 1);
 
-	    for (found = i = 0; i < resultCnt; i++) {
-		availablePackage alp = al->list + result[i].pkgNum;
-		if (alp->p == NULL) /* deleted */
+	    for (auto it = range.first; it != range.second; ++it) {
+		auto & alp = al->list[it->second.pkgNum];
+		if (alp.p == NULL) /* deleted */
 		    continue;
 		/* ignore self-conflicts/obsoletes */
-		if (filterds && rpmteDS(alp->p, rpmdsTagN(filterds)) == filterds)
+		if (filterds && rpmteDS(alp.p, rpmdsTagN(filterds)) == filterds)
 		    continue;
-		if (result[i].dirName != dirName) {
+		if (it->second.dirName != dirName) {
 		    /* if the directory is different check the fingerprints */
 		    if (!al->fpc)
 			al->fpc = fpCacheCreate(1001, al->pool);
 		    if (!fp)
 			fpLookupId(al->fpc, dirName, baseName, &fp);
-		    if (!fpLookupEqualsId(al->fpc, fp, result[i].dirName, baseName))
+		    if (!fpLookupEqualsId(al->fpc, fp, it->second.dirName, baseName))
 			continue;
 		}
-		ret[found] = alp->p;
-		found++;
+		ret.push_back(alp.p);
 	    }
 	    _free(fp);
-	    ret[found] = NULL;
 	}
     }
 
     return ret;
 }
 
-rpmte * rpmalAllSatisfiesDepend(const rpmal al, const rpmds ds)
+std::vector<rpmte> rpmalAllSatisfiesDepend(const rpmal al, const rpmds ds)
 {
-    rpmte * ret = NULL;
-    int i, ix, found;
+    std::vector<rpmte> ret;
     rpmsid nameId;
     const char *name;
-    availableIndexEntry result;
-    int resultCnt;
     int obsolete;
     rpmTagVal dtag;
     rpmds filterds = NULL;
 
-    availablePackage alp;
     int rc;
 
     if (al == NULL || ds == NULL || (nameId = rpmdsNId(ds)) == 0)
@@ -457,53 +367,43 @@ rpmte * rpmalAllSatisfiesDepend(const rpmal al, const rpmds ds)
     if (!obsolete && *name == '/') {
 	/* First, look for files "contained" in package ... */
 	ret = rpmalAllFileSatisfiesDepend(al, name, filterds);
-	if (ret != NULL && *ret != NULL) {
+	if (!ret.empty()) {
 	    rpmdsNotify(ds, "(added files)", 0);
 	    return ret;
 	}
 	/* ... then, look for files "provided" by package. */
-	ret = _free(ret);
     }
 
     if (al->providesHash == NULL)
 	rpmalMakeProvidesIndex(al);
 
-    rpmalDepHashGetEntry(al->providesHash, nameId, &result,
-			      &resultCnt, NULL);
-
-    if (resultCnt==0) return NULL;
-
-    ret = (rpmte *)xmalloc((resultCnt+1) * sizeof(*ret));
-
-    for (found=i=0; i<resultCnt; i++) {
-	alp = al->list + result[i].pkgNum;
-	if (alp->p == NULL) /* deleted */
+    auto range = al->providesHash->equal_range(nameId);
+    for (auto it = range.first; it != range.second; ++it) {
+	auto & alp = al->list[it->second.pkgNum];
+	if (alp.p == NULL) /* deleted */
 	    continue;
 	/* ignore self-conflicts/obsoletes */
-	if (filterds && rpmteDS(alp->p, rpmdsTagN(filterds)) == filterds)
+	if (filterds && rpmteDS(alp.p, rpmdsTagN(filterds)) == filterds)
 	    continue;
-	ix = result[i].entryIx;
+	int ix = it->second.entryIx;
 
 	if (obsolete) {
 	    /* Obsoletes are on package NEVR only */
 	    rpmds thisds;
-	    if (!rstreq(rpmdsNIndex(alp->provides, ix), rpmteN(alp->p)))
+	    if (!rstreq(rpmdsNIndex(alp.provides, ix), rpmteN(alp.p)))
 		continue;
-	    thisds = rpmteDS(alp->p, RPMTAG_NAME);
+	    thisds = rpmteDS(alp.p, RPMTAG_NAME);
 	    rc = rpmdsCompareIndex(thisds, rpmdsIx(thisds), ds, rpmdsIx(ds));
 	} else {
-	    rc = rpmdsCompareIndex(alp->provides, ix, ds, rpmdsIx(ds));
+	    rc = rpmdsCompareIndex(alp.provides, ix, ds, rpmdsIx(ds));
 	}
 
 	if (rc)
-	    ret[found++] = alp->p;
+	    ret.push_back(alp.p);
     }
 
-    if (found) {
+    if (!ret.empty()) {
 	rpmdsNotify(ds, "(added provide)", 0);
-	ret[found] = NULL;
-    } else {
-	ret = _free(ret);
     }
 
     return ret;
@@ -512,13 +412,13 @@ rpmte * rpmalAllSatisfiesDepend(const rpmal al, const rpmds ds)
 rpmte
 rpmalSatisfiesDepend(const rpmal al, const rpmte te, const rpmds ds)
 {
-    rpmte *providers = rpmalAllSatisfiesDepend(al, ds);
+    auto const providers = rpmalAllSatisfiesDepend(al, ds);
     rpmte best = NULL;
     int bestscore = 0;
 
-    if (providers) {
+    if (!providers.empty()) {
 	rpm_color_t dscolor = rpmdsColor(ds);
-	for (rpmte *p = providers; *p; p++) {
+	for (rpmte const p : providers) {
 	    int score = 0;
 
 	    /*
@@ -526,7 +426,7 @@ rpmalSatisfiesDepend(const rpmal al, const rpmte te, const rpmds ds)
 	     * Otherwise prefer provider of ts preferred color.
 	     */
 	    if (al->tscolor) {
-		rpm_color_t tecolor = rpmteColor(*p);
+		rpm_color_t tecolor = rpmteColor(p);
 		if (dscolor) {
 		    if (dscolor == tecolor) score += 2;
 		} else if (al->prefcolor) {
@@ -535,17 +435,17 @@ rpmalSatisfiesDepend(const rpmal al, const rpmte te, const rpmds ds)
 	    }
 
 	    /* Being self-provided is a bonus */
-	    if (*p == te)
+	    if (p == te)
 		score += 1;
 
 	    if (score > bestscore) {
 		bestscore = score;
-		best = *p;
+		best = p;
 	    }
 	}
 	/* if not decided by now, just pick first match */
-	if (!best) best = providers[0];
-	free(providers);
+	if (!best)
+	    best = providers[0];
     }
     return best;
 }
@@ -553,10 +453,13 @@ rpmalSatisfiesDepend(const rpmal al, const rpmte te, const rpmds ds)
 unsigned int
 rpmalLookupTE(const rpmal al, const rpmte te)
 {
-    rpmalNum pkgNum;
-    for (pkgNum=0; pkgNum < al->size; pkgNum++)
-	if (al->list[pkgNum].p == te)
+    rpmalNum pkgNum = (unsigned int)-1;
+    for (auto it = al->list.begin(); it != al->list.end(); ++it) {
+	if (it->p == te) {
+	    pkgNum = it - al->list.begin();
 	    break;
-    return pkgNum < al->size ? pkgNum : (unsigned int)-1;
+	}
+    }
+    return pkgNum;
 }
 

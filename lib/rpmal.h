@@ -6,12 +6,9 @@
  * Structures used for managing added/available package lists.
  */
 
+#include <vector>
 #include <rpm/rpmtypes.h>
 #include <rpm/rpmts.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 typedef struct rpmal_s * rpmal;
 
@@ -55,16 +52,16 @@ void rpmalAdd(rpmal al, rpmte p);
  * @return		obsoleting packages for ds, NULL if none
  */
 RPM_GNUC_INTERNAL
-rpmte * rpmalAllObsoletes(const rpmal al, const rpmds ds);
+std::vector<rpmte> rpmalAllObsoletes(const rpmal al, const rpmds ds);
 
 /**
  * Lookup all providers for a dependency in the available list
  * @param al		available list
  * @param ds		dependency set
- * @return		best provider for the dependency, NULL if none
+ * @return		best provider for the dependency (if any)
  */
 RPM_GNUC_INTERNAL
-rpmte * rpmalAllSatisfiesDepend(const rpmal al, const rpmds ds);
+std::vector<rpmte> rpmalAllSatisfiesDepend(const rpmal al, const rpmds ds);
 
 /**
  * Lookup best provider for a dependency in the available list
@@ -84,9 +81,5 @@ rpmte rpmalSatisfiesDepend(const rpmal al, const rpmte te, const rpmds ds);
  */
 RPM_GNUC_INTERNAL
 unsigned int rpmalLookupTE(const rpmal al, const rpmte te);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif	/* H_RPMAL */

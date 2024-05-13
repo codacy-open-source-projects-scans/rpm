@@ -4,6 +4,9 @@
 
 #include "system.h"
 
+#include <string>
+#include <unordered_map>
+
 #include <rpm/rpmlib.h>		/* rpmVersionCompare, rpmlib provides */
 #include <rpm/rpmtag.h>
 #include <rpm/rpmlog.h>
@@ -30,22 +33,7 @@ const char * const rpmEVR = VERSION;
 
 const int rpmFLAGS = RPMSENSE_EQUAL;
 
-#define HASHTYPE depCache
-#define HTKEYTYPE const char *
-#define HTDATATYPE int
-#include "rpmhash.H"
-#include "rpmhash.C"
-#undef HASHTYPE
-#undef HTKEYTYPE
-#undef HTDATATYPE
-
-#define HASHTYPE packageHash
-#define HTKEYTYPE unsigned int
-#define HTDATATYPE struct rpmte_s *
-#include "rpmhash.C"
-#undef HASHTYPE
-#undef HTKEYTYPE
-#undef HTDATATYPE
+typedef std::unordered_map<std::string,int> depCache;
 
 #define HASHTYPE filedepHash
 #define HTKEYTYPE rpmsid
@@ -96,16 +84,10 @@ static rpmRC headerCheckPayloadFormat(Header h) {
 
 static void addElement(tsMembers tsmem, rpmte te, int oc)
 {
-    if (oc >= tsmem->orderAlloced) {
-	tsmem->orderAlloced += (oc - tsmem->orderAlloced) + tsmem->delta;
-	tsmem->order = xrealloc(tsmem->order,
-	tsmem->orderAlloced * sizeof(*tsmem->order));
-    }
-
-    tsmem->order[oc] = te;
-    if (oc == tsmem->orderCount) {
-	tsmem->orderCount++;
-    }
+    if (oc >= 0 && oc < tsmem->order.size())
+	tsmem->order[oc] = te;
+    else
+	tsmem->order.push_back(te);
 }
 
 
@@ -119,16 +101,17 @@ static void addElement(tsMembers tsmem, rpmte te, int oc)
 static int removePackage(rpmts ts, Header h, rpmte depends)
 {
     tsMembers tsmem = rpmtsMembers(ts);
-    rpmte p, *pp;
+    rpmte p;
     unsigned int dboffset = headerGetInstance(h);
 
     /* Can't remove what's not installed */
     if (dboffset == 0) return 1;
 
     /* Filter out duplicate erasures. */
-    if (packageHashGetEntry(tsmem->removedPackages, dboffset, &pp, NULL, NULL)) {
+    auto it = tsmem->removedPackages.find(dboffset);
+    if (it != tsmem->removedPackages.end()) {
 	if (depends)
-	    rpmteSetDependsOn(pp[0], depends);
+	    rpmteSetDependsOn(it->second, depends);
 	return 0;
     }
 
@@ -136,10 +119,10 @@ static int removePackage(rpmts ts, Header h, rpmte depends)
     if (p == NULL)
 	return 1;
 
-    packageHashAddEntry(tsmem->removedPackages, dboffset, p);
+    tsmem->removedPackages.insert({dboffset, p});
     rpmteSetDependsOn(p, depends);
 
-    addElement(tsmem, p, tsmem->orderCount);
+    addElement(tsmem, p, -1);
     rpmtsNotifyChange(ts, RPMTS_EVENT_ADD, p, depends);
 
     return 0;
@@ -269,12 +252,9 @@ static int addObsoleteErasures(rpmts ts, rpm_color_t tscolor, rpmte p)
 static rpmte checkObsoleted(rpmal addedPackages, rpmds thisds)
 {
     rpmte p = NULL;
-    rpmte *matches = NULL;
-
-    matches = rpmalAllObsoletes(addedPackages, thisds);
-    if (matches) {
+    auto matches = rpmalAllObsoletes(addedPackages, thisds);
+    if (!matches.empty()) {
 	p = matches[0];
-	free(matches);
     }
     return p;
 }
@@ -289,27 +269,24 @@ static rpmte checkAdded(rpmal addedPackages, rpm_color_t tscolor,
 			rpmte te, rpmds ds)
 {
     rpmte p = NULL;
-    rpmte *matches = NULL;
+    auto const matches = rpmalAllSatisfiesDepend(addedPackages, ds);
 
-    matches = rpmalAllSatisfiesDepend(addedPackages, ds);
-    if (matches) {
+    if (!matches.empty()) {
 	const char * arch = rpmteA(te);
 	const char * os = rpmteO(te);
-
-	for (rpmte *m = matches; m && *m; m++) {
+	for (rpmte const m : matches) {
 	    if (tscolor) {
-		const char * parch = rpmteA(*m);
-		const char * pos = rpmteO(*m);
+		const char * parch = rpmteA(m);
+		const char * pos = rpmteO(m);
 
 		if (arch == NULL || parch == NULL || os == NULL || pos == NULL)
 		    continue;
 		if (!rstreq(arch, parch) || !rstreq(os, pos))
 		    continue;
 	    }
-	    p = *m;
+	    p = m;
 	    break;
-  	}
-	free(matches);
+	}
     }
     return p;
 }
@@ -324,7 +301,7 @@ static rpmte checkAdded(rpmal addedPackages, rpm_color_t tscolor,
 static int findPos(rpmts ts, rpm_color_t tscolor, rpmte te, int upgrade)
 {
     tsMembers tsmem = rpmtsMembers(ts);
-    int oc = tsmem->orderCount;
+    int oc = tsmem->order.size();
     int skip = 0;
     const char * name = rpmteN(te);
     const char * evr = rpmteEVR(te);
@@ -384,7 +361,7 @@ exit:
 
     /* If replacing a previous element, find out where it is. Pooh. */
     if (!skip && p != NULL) {
-	for (oc = 0; oc < tsmem->orderCount; oc++) {
+	for (oc = 0; oc < tsmem->order.size(); oc++) {
 	    if (p == tsmem->order[oc])
 		break;
 	}
@@ -420,7 +397,7 @@ static int addPackage(rpmts ts, Header h,
     rpmte p = NULL;
     int isSource = headerIsSource(h);
     int ec = 0;
-    int oc = tsmem->orderCount;
+    int oc = tsmem->order.size();
 
     /* Check for supported payload format if it's a package */
     if (key && headerCheckPayloadFormat(h) != RPMRC_OK) {
@@ -448,7 +425,7 @@ static int addPackage(rpmts ts, Header h,
     if (!isSource) {
 	oc = findPos(ts, tscolor, p, (op == RPMTE_UPGRADE));
 	/* If we're replacing a previously added element, free the old one */
-	if (oc >= 0 && oc < tsmem->orderCount) {
+	if (oc >= 0 && oc < tsmem->order.size()) {
 	    rpmtsNotifyChange(ts, RPMTS_EVENT_DEL, tsmem->order[oc], p);
 	    rpmalDel(tsmem->addedPackages, tsmem->order[oc]);
 	    tsmem->order[oc] = rpmteFree(tsmem->order[oc]);
@@ -507,7 +484,7 @@ int rpmtsAddRestoreElement(rpmts ts, Header h)
     if (p == NULL)
 	return 1;
 
-    addElement(tsmem, p, tsmem->orderCount);
+    addElement(tsmem, p, -1);
     rpmtsNotifyChange(ts, RPMTS_EVENT_ADD, p, NULL);
 
     return 0;
@@ -521,24 +498,22 @@ int rpmtsAddEraseElement(rpmts ts, Header h, int dboffset)
 }
 
 /* Cached rpmdb provide lookup, returns 0 if satisfied, 1 otherwise */
-static int rpmdbProvides(rpmts ts, depCache dcache, rpmds dep, dbiIndexSet *matches)
+static int rpmdbProvides(rpmts ts, depCache *dcache, rpmds dep, dbiIndexSet *matches)
 {
     const char * Name = rpmdsN(dep);
     const char * DNEVR = rpmdsDNEVR(dep);
     rpmTagVal deptag = rpmdsTagN(dep);
-    int *cachedrc = NULL;
     rpmdbMatchIterator mi = NULL;
     Header h = NULL;
     int rc = 0;
     /* pretrans deps are provided by current packages, don't prune erasures */
     int prune = (rpmdsFlags(dep) & (RPMSENSE_PRETRANS|RPMSENSE_PREUNTRANS)) ? 0 : 1;
-    unsigned int keyhash = 0;
 
     /* See if we already looked this up */
     if (prune && !matches) {
-	keyhash = depCacheKeyHash(dcache, DNEVR);
-	if (depCacheGetHEntry(dcache, DNEVR, keyhash, &cachedrc, NULL, NULL)) {
-	    rc = *cachedrc;
+	auto ret = dcache->find(DNEVR);
+	if (ret != dcache->end()) {
+	    rc = ret->second;
 	    rpmdsNotify(dep, "(cached)", rc);
 	    return rc;
 	}
@@ -613,7 +588,7 @@ static int rpmdbProvides(rpmts ts, depCache dcache, rpmds dep, dbiIndexSet *matc
     /* Cache the relatively expensive rpmdb lookup results */
     /* Caching the oddball non-pruned case would mess up other results */
     if (prune && !matches)
-	depCacheAddHEntry(dcache, xstrdup(DNEVR), keyhash, rc);
+	dcache->insert({DNEVR, rc});
     return rc;
 }
 
@@ -667,12 +642,10 @@ exit_rich:
 
     /* Pretrans dependencies can't be satisfied by added packages. */
     if (!(dsflags & (RPMSENSE_PRETRANS|RPMSENSE_PREUNTRANS))) {
-	rpmte *matches = rpmalAllSatisfiesDepend(tsmem->addedPackages, dep);
-	if (matches) {
-	    for (rpmte *p = matches; *p; p++)
-		dbiIndexSetAppendOne(set1, rpmalLookupTE(tsmem->addedPackages, *p), 1, 0);
+	auto matches = rpmalAllSatisfiesDepend(tsmem->addedPackages, dep);
+	for (rpmte const p : matches) {
+	    dbiIndexSetAppendOne(set1, rpmalLookupTE(tsmem->addedPackages, p), 1, 0);
 	}
-	_free(matches);
     }
 
 exit:
@@ -687,7 +660,7 @@ exit:
  * @param dep		dependency
  * @return		0 if satisfied, 1 if not satisfied
  */
-static int unsatisfiedDepend(rpmts ts, depCache dcache, rpmds dep)
+static int unsatisfiedDepend(rpmts ts, depCache *dcache, rpmds dep)
 {
     tsMembers tsmem = rpmtsMembers(ts);
     int rc;
@@ -781,10 +754,8 @@ exitrich:
 
     /* Pretrans dependencies can't be satisfied by added packages. */
     if (!(dsflags & (RPMSENSE_PRETRANS|RPMSENSE_PREUNTRANS))) {
-	rpmte *matches = rpmalAllSatisfiesDepend(tsmem->addedPackages, dep);
-	int match = matches && *matches;
-	_free(matches);
-	if (match)
+	auto const matches = rpmalAllSatisfiesDepend(tsmem->addedPackages, dep);
+	if (!matches.empty())
 	    goto exit;
     }
 
@@ -818,7 +789,7 @@ exit:
 }
 
 /* Check a dependency set for problems */
-static void checkDS(rpmts ts, depCache dcache, rpmte te,
+static void checkDS(rpmts ts, depCache *dcache, rpmte te,
 		const char * pkgNEVRA, rpmds ds,
 		rpm_color_t tscolor)
 {
@@ -839,7 +810,7 @@ static void checkDS(rpmts ts, depCache dcache, rpmte te,
 }
 
 /* Check a given dependency against installed packages */
-static void checkInstDeps(rpmts ts, depCache dcache, rpmte te,
+static void checkInstDeps(rpmts ts, depCache *dcache, rpmte te,
 			  rpmTag depTag, const char *dep, rpmds depds, int neg)
 {
     Header h;
@@ -889,7 +860,7 @@ static void checkInstDeps(rpmts ts, depCache dcache, rpmte te,
     free(ndep);
 }
 
-static void checkInstFileDeps(rpmts ts, depCache dcache, rpmte te,
+static void checkInstFileDeps(rpmts ts, depCache *dcache, rpmte te,
 			      rpmTag depTag, rpmfi fi, int is_not,
 			      filedepHash cache, fingerPrintCache *fpcp)
 {
@@ -996,7 +967,7 @@ int rpmtsCheck(rpmts ts)
     rpmtsi pi = NULL; rpmte p;
     int closeatexit = 0;
     int rc = 0;
-    depCache dcache = NULL;
+    depCache _dcache, *dcache = &_dcache;
     filedepHash confilehash = NULL;	/* file conflicts of installed packages */
     filedepHash connotfilehash = NULL;	/* file conflicts of installed packages */
     depexistsHash connothash = NULL;
@@ -1019,10 +990,6 @@ int rpmtsCheck(rpmts ts)
 
     if (rdb)
 	rpmdbCtrl(rdb, RPMDB_CTRL_LOCK_RO);
-
-    /* XXX FIXME: figure some kind of heuristic for the cache size */
-    dcache = depCacheCreate(5001, rstrhash, strcmp,
-				     (depCacheFreeKey)rfree, NULL);
 
     /* build hashes of all confilict sdependencies */
     confilehash = filedepHashCreate(257, sidHash, sidCmp, NULL, NULL);
@@ -1134,7 +1101,6 @@ int rpmtsCheck(rpmts ts)
 	rpmdbCtrl(rdb, RPMDB_CTRL_UNLOCK_RO);
 
 exit:
-    depCacheFree(dcache);
     filedepHashFree(confilehash);
     filedepHashFree(connotfilehash);
     depexistsHashFree(connothash);

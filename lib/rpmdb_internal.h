@@ -2,23 +2,14 @@
 #define H_RPMDB_INTERNAL
 
 #include <assert.h>
+#include <unordered_map>
 
 #include <rpm/rpmsw.h>
 #include <rpm/rpmtypes.h>
 #include <rpm/rpmutil.h>
 #include "backend/dbi.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#define HASHTYPE packageHash
-#define HTKEYTYPE unsigned int
-#define HTDATATYPE struct rpmte_s *
-#include "rpmhash.H"
-#undef HASHTYPE
-#undef HTKEYTYPE
-#undef HTDATATYPE
+typedef std::unordered_map<unsigned int,rpmte> packageHash;
 
 enum rpmdbRebuildFlags_e {
     RPMDB_REBUILD_FLAG_SALVAGE	= (1 << 0),
@@ -139,7 +130,7 @@ void rpmdbUniqIterator(rpmdbMatchIterator mi);
  * @param neg		mode
  * return		0 on success, 1 on failure (bad args)
  */
-int rpmdbFilterIterator(rpmdbMatchIterator mi, packageHash hdrNums, int neg);
+int rpmdbFilterIterator(rpmdbMatchIterator mi, packageHash const & hdrNums, int neg);
 
 /** \ingroup rpmdb
  * Remove items from set of package instances to iterate.
@@ -148,7 +139,7 @@ int rpmdbFilterIterator(rpmdbMatchIterator mi, packageHash hdrNums, int neg);
  * @param hdrNums	hash of package instances
  * @return		0 on success, 1 on failure (bad args)
  */
-int rpmdbPruneIterator(rpmdbMatchIterator mi, packageHash hdrNums);
+int rpmdbPruneIterator(rpmdbMatchIterator mi, packageHash const & hdrNums);
 
 /** \ingroup rpmdb
  * Create a new, empty match iterator (for purposes of extending it
@@ -213,9 +204,5 @@ unsigned int rpmdbGetIteratorOffsetFor(rpmdbMatchIterator mi, unsigned int ix);
  */
 RPM_GNUC_INTERNAL
 Header rpmdbGetHeaderAt(rpmdb db, unsigned int offset);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif
