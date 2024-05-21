@@ -1,19 +1,17 @@
 #ifndef _RPMBUILD_INTERNAL_H
 #define _RPMBUILD_INTERNAL_H
 
+#include <string>
+#include <unordered_map>
+#include <vector>
+
 #include <rpm/rpmbuild.h>
 #include <rpm/rpmutil.h>
 #include <rpm/rpmstrpool.h>
 #include "rpmbuild_misc.h"
 #include "rpmlua.h"
 
-#define HASHTYPE fileRenameHash
-#define HTKEYTYPE const char *
-#define HTDATATYPE const char *
-#include "rpmhash.H"
-#undef HASHTYPE
-#undef HTKEYTYPE
-#undef HTDATATYPE
+typedef std::unordered_multimap<std::string,std::string> fileRenameHash;
 
 #define ALLOWED_CHARS_NAME ".-_+%{}"
 #define ALLOWED_FIRSTCHARS_NAME "_%"
@@ -208,9 +206,9 @@ struct Package_s {
     char * postunTransFile;	/*!< %postuntrans scriptlet. */
     char * verifyFile;	/*!< %verifyscript scriptlet. */
 
-    struct TriggerFileEntry * triggerFiles;
-    struct TriggerFileEntry * fileTriggerFiles;
-    struct TriggerFileEntry * transFileTriggerFiles;
+    std::vector<TriggerFileEntry> triggerFiles;
+    std::vector<TriggerFileEntry> fileTriggerFiles;
+    std::vector<TriggerFileEntry> transFileTriggerFiles;
 
     ARGV_t fileFile;
     ARGV_t fileList;		/* If NULL, package will not be written */
@@ -521,7 +519,7 @@ rpmRC rpmfcGenerateDepends(const rpmSpec spec, Package pkg);
  */
 RPM_GNUC_INTERNAL
 int rpmfcExec(ARGV_const_t av, StringBuf sb_stdin, StringBuf * sb_stdoutp,
-		int failnonzero, const char *buildRoot);
+		int failnonzero, const std::string & buildRoot);
 
 /** \ingroup rpmbuild
  * Post-build processing for policies in binary package(s).

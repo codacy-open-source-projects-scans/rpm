@@ -1,5 +1,7 @@
 #include "system.h"
 
+#include <algorithm>
+
 #include <errno.h>
 #include <libgen.h>
 #include <sys/select.h>
@@ -26,6 +28,9 @@
 
 #include "debug.h"
 
+using std::string;
+using std::vector;
+
 struct matchRule {
     regex_t *path;
     regex_t *magic;
@@ -40,25 +45,18 @@ typedef struct rpmfcAttr_s {
     char *proto;
 } * rpmfcAttr;
 
-typedef struct {
+struct rpmfcFileDep {
     int fileIx;
     rpmds dep;
-} rpmfcFileDep;
 
-typedef struct {
-    rpmfcFileDep *data;
-    int size;
-    int alloced;
-} rpmfcFileDeps;
+    bool operator < (const rpmfcFileDep & other) {
+	return fileIx < other.fileIx;
+    }
+};
 
-#define HASHTYPE fattrHash
-#define HTKEYTYPE int
-#define HTDATATYPE int
-#include "rpmhash.H"
-#include "rpmhash.C"
-#undef HASHTYPE
-#undef HTKEYTYPE
-#undef HTDATATYPE
+typedef vector<rpmfcFileDep> rpmfcFileDeps;
+
+typedef std::unordered_multimap<int,int> fattrHash;
 
 struct rpmfc_s {
     Package pkg;
@@ -67,19 +65,18 @@ struct rpmfc_s {
     int fwhite;		/*!< no. of "white" files */
     int skipProv;	/*!< Don't auto-generate Provides:? */
     int skipReq;	/*!< Don't auto-generate Requires:? */
-    char *buildRoot;	/*!< (Build) root dir */
-    size_t brlen;	/*!< rootDir length */
+    string buildRoot;	/*!< (Build) root dir */
 
-    rpmfcAttr *atypes;	/*!< known file attribute types */
+    vector<rpmfcAttr> atypes;	/*!< known file attribute types */
 
-    char ** fn;		/*!< (no. files) file names */
-    char ** ftype;	/*!< (no. files) file types */
+    vector<string> fn;	/*!< (no. files) file names */
+    vector<string> ftype;/*!< (no. files) file types */
     ARGV_t *fattrs;	/*!< (no. files) file attribute tokens */
-    rpm_color_t *fcolor;/*!< (no. files) file colors */
-    rpmsid *fcdictx;	/*!< (no. files) file class dictionary indices */
-    ARGI_t fddictx;	/*!< (no. files) file depends dictionary start */
-    ARGI_t fddictn;	/*!< (no. files) file depends dictionary no. entries */
-    ARGI_t ddictx;	/*!< (no. dependencies) file->dependency mapping */
+    vector<rpm_color_t> fcolor; /*!< (no. files) file colors */
+    vector<rpmsid> fcdictx;/*!< (no. files) file class dictionary indices */
+    vector<uint32_t> fddictx;/*!< (no. files) file depends dictionary start */
+    vector<uint32_t> fddictn;/*!< (no. files) file depends dictionary no. entries */
+    vector<uint32_t> ddictx;	/*!< (no. dependencies) file->dependency mapping */
     rpmstrPool cdict;	/*!< file class dictionary */
     rpmfcFileDeps fileDeps; /*!< file dependency mapping */
 
@@ -92,17 +89,6 @@ struct rpmfcTokens_s {
     rpm_color_t colors;
 };  
 typedef const struct rpmfcTokens_s * rpmfcToken;
-
-static int intCmp(int a, int b)
-{
-    return (a != b);
-}
-
-static unsigned int intId(int a)
-{
-    return a;
-}
-
 
 static int regMatch(regex_t *reg, const char *val)
 {
@@ -128,38 +114,23 @@ static void ruleFree(struct matchRule *rule)
 
 static char *rpmfcAttrMacroV(const char *arg, va_list args)
 {
-    const char *s;
-    int blen;
-    char *buf = NULL, *obuf;
-    char *pe;
-    va_list args2;
 
     if (arg == NULL || rstreq(arg, ""))
 	return NULL;
 
-    va_copy(args2, args);
-    blen = sizeof("%{?_") - 1;
-    for (s = arg; s != NULL; s = va_arg(args, const char *)) {
-	blen += sizeof("_") - 1 + strlen(s);
+    string buf = "%{?__";
+    for (const char *s = arg; s != NULL; s = va_arg(args, const char *)) {
+	if (s != arg)
+	    buf += '_';
+	buf += s;
     }
-    blen += sizeof("}") - 1;
+    buf += "}";
 
-    buf = (char *)xmalloc(blen + 1);
+    char *obuf = rpmExpand(buf.c_str(), NULL);
+    if (rstreq(obuf, ""))
+	obuf = _free(obuf);
 
-    pe = buf;
-    pe = stpcpy(pe, "%{?_");
-    for (s = arg; s != NULL; s = va_arg(args2, const char *)) {
-	*pe++ = '_';
-	pe = stpcpy(pe, s);
-    }
-    va_end(args2);
-    *pe++ = '}';
-    *pe = '\0';
-
-    obuf = rpmExpand(buf, NULL);
-    free(buf);
-
-    return rstreq(obuf, "") ? _free(obuf) : obuf;
+    return obuf;
 }
 
 static char *rpmfcAttrMacro(const char *arg, ...)
@@ -195,7 +166,7 @@ static regex_t *rpmfcAttrReg(const char *arg, ...)
 
 static rpmfcAttr rpmfcAttrNew(const char *name)
 {
-    rpmfcAttr attr = (rpmfcAttr)xcalloc(1, sizeof(*attr));
+    rpmfcAttr attr = new rpmfcAttr_s {};
     struct matchRule *rules[] = { &attr->incl, &attr->excl, NULL };
 
     attr->name = xstrdup(name);
@@ -240,7 +211,7 @@ static rpmfcAttr rpmfcAttrFree(rpmfcAttr attr)
 	ruleFree(&attr->excl);
 	rfree(attr->name);
 	rfree(attr->proto);
-	rfree(attr);
+	delete attr;
     }
     return NULL;
 }
@@ -280,7 +251,7 @@ static rpmds rpmdsSingleNS(rpmstrPool pool,
 static int getOutputFrom(ARGV_t argv,
 			 const char * writePtr, size_t writeBytesLeft,
 			 StringBuf sb_stdout,
-			 int failNonZero, const char *buildRoot)
+			 int failNonZero, const string & buildRoot)
 {
     pid_t child, reaped;
     int toProg[2] = { -1, -1 };
@@ -335,8 +306,8 @@ static int getOutputFrom(ARGV_t argv,
                         argv[0], (unsigned)getpid());
 
 	unsetenv("DEBUGINFOD_URLS");
-	if (buildRoot)
-	    setenv("RPM_BUILD_ROOT", buildRoot, 1);
+	if (!buildRoot.empty())
+	    setenv("RPM_BUILD_ROOT", buildRoot.c_str(), 1);
 
 	execvp(argv[0], (char *const *)argv);
 	rpmlog(RPMLOG_ERR, _("Couldn't exec %s: %s\n"),
@@ -455,7 +426,7 @@ exit:
 }
 
 int rpmfcExec(ARGV_const_t av, StringBuf sb_stdin, StringBuf * sb_stdoutp,
-		int failnonzero, const char *buildRoot)
+		int failnonzero, const string & buildRoot)
 {
     char * s = NULL;
     ARGV_t xav = NULL;
@@ -530,18 +501,13 @@ static void argvAddUniq(ARGV_t * argvp, const char * key)
 
 #define hasAttr(_a, _n) (argvSearch((_a), (_n), NULL) != NULL)
 
-static void rpmfcAddFileDep(rpmfcFileDeps *fileDeps, rpmds ds, int ix)
+static void rpmfcAddFileDep(rpmfcFileDeps & fileDeps, rpmds ds, int ix)
 {
-    if (fileDeps->size == fileDeps->alloced) {
-	fileDeps->alloced <<= 2;
-	fileDeps->data  = xrealloc(fileDeps->data,
-	    fileDeps->alloced * sizeof(fileDeps->data[0]));
-    }
-    fileDeps->data[fileDeps->size].fileIx = ix;
-    fileDeps->data[fileDeps->size++].dep = ds;
+    rpmfcFileDep dep { ix, ds };
+    fileDeps.push_back(dep);
 }
 
-static ARGV_t runCmd(const char *name, const char *buildRoot, ARGV_t fns)
+static ARGV_t runCmd(const char *name, const string & buildRoot, ARGV_t fns)
 {
     ARGV_t output = NULL;
     ARGV_t av = NULL;
@@ -565,7 +531,7 @@ static ARGV_t runCmd(const char *name, const char *buildRoot, ARGV_t fns)
     return output;
 }
 
-static ARGV_t runCall(const char *name, const char *buildRoot, ARGV_t fns)
+static ARGV_t runCall(const char *name, const string & buildRoot, ARGV_t fns)
 {
     ARGV_t output = NULL;
     ARGV_t args = NULL;
@@ -610,7 +576,7 @@ static rpmRC addReqProvFc(void *cbdata, rpmTagVal tagN,
     rpmds ds = rpmdsSingleNS(fc->pool, tagN, namespc, N, EVR, Flags);
     /* Add to package and file dependencies unless filtered */
     if (regMatch(exclude, rpmdsDNEVR(ds)+2) == 0)
-	rpmfcAddFileDep(&fc->fileDeps, ds, index);
+	rpmfcAddFileDep(fc->fileDeps, ds, index);
 
     return RPMRC_OK;
 }
@@ -680,51 +646,34 @@ static int genDeps(const char *mname, int multifile, rpmTagVal tagN,
     return rc;
 }
 
-static int rpmfcHelper(rpmfc fc, int *ixs, int n, const char *proto,
+static int rpmfcHelper(rpmfc fc, int *fnx, int nfn, const char *proto,
 		       const struct exclreg_s *excl,
 		       rpmsenseFlags dsContext, rpmTagVal tagN,
 		       const char *namespc, const char *mname)
 {
     int rc = 0;
-    const char **paths = (const char **)xcalloc(n + 1, sizeof(*paths));
-    int *fnx = (int *)xmalloc(n * sizeof(*fnx));
-    int nfn = 0;
-
-    for (int i = 0; i < n; i++) {
-	int fx = ixs[i];
-	const char *fn = fc->fn[fx];
-	/* If the entire path is filtered out, there's nothing more to do */
-	if (regMatch(excl->exclude_from, fn+fc->brlen))
-	    continue;
-
-	if (regMatch(excl->global_exclude_from, fn+fc->brlen))
-	    continue;
-
-	paths[nfn] = fn;
-	fnx[nfn] = fx;
-	nfn++;
-    }
-    paths[nfn] = NULL;
-
     struct addReqProvDataFc data;
     data.fc = fc;
     data.namespc = namespc;
     data.exclude = excl->exclude;
 
     if (proto && rstreq(proto, "multifile")) {
+	const char **paths = (const char **)xcalloc(nfn + 1, sizeof(*paths));
+	for (int i = 0; i < nfn; i++)
+	    paths[i] = fc->fn[fnx[i]].c_str();
+	paths[nfn] = NULL;
 	rc = genDeps(mname, 1, tagN, dsContext, &data,
 			fnx, nfn, -1, (ARGV_t) paths);
+	free(paths);
     } else {
 	for (int i = 0; i < nfn; i++) {
-	    const char *fn = fc->fn[fnx[i]];
+	    const char *fn = fc->fn[fnx[i]].c_str();
 	    const char *paths[] = { fn, NULL };
 
 	    rc += genDeps(mname, 0, tagN, dsContext, &data,
 			fnx, nfn, i, (ARGV_t) paths);
 	}
     }
-    free(fnx);
-    free(paths);
 
     return rc;
 }
@@ -807,7 +756,7 @@ static int matches(const struct matchRule *rule,
 
 static void rpmfcAttributes(rpmfc fc, int ix, const char *ftype, const char *fmime, const char *fullpath)
 {
-    const char *path = fullpath + fc->brlen;
+    const char *path = fullpath + fc->buildRoot.size();
     int is_executable = 0;
     struct stat st;
     if (stat(fullpath, &st) == 0) {
@@ -815,16 +764,18 @@ static void rpmfcAttributes(rpmfc fc, int ix, const char *ftype, const char *fmi
 			(st.st_mode & (S_IXUSR|S_IXGRP|S_IXOTH));
     }
 
-    for (rpmfcAttr *attr = fc->atypes; attr && *attr; attr++) {
+    for (int i = 0; i < fc->atypes.size(); ++i) {
+	rpmfcAttr attr = fc->atypes[i];
+
 	/* Filter out excludes */
-	if (matches(&(*attr)->excl, ftype, fmime, path, is_executable))
+	if (matches(&(attr)->excl, ftype, fmime, path, is_executable))
 	    continue;
 
 	/* Add attributes on libmagic type & path pattern matches */
-	if (matches(&(*attr)->incl, ftype, fmime, path, is_executable)) {
-	    argvAddTokens(&fc->fattrs[ix], (*attr)->name);
+	if (matches(&(attr)->incl, ftype, fmime, path, is_executable)) {
+	    argvAddTokens(&fc->fattrs[ix], (attr)->name);
 	    #pragma omp critical(fahash)
-	    fattrHashAddEntry(fc->fahash, attr-fc->atypes, ix);
+	    fc->fahash.insert({i, ix});
 	}
     }
 }
@@ -860,7 +811,7 @@ void rpmfcPrint(const char * msg, rpmfc fc, FILE * fp)
 
     if (fc)
     for (fx = 0; fx < fc->nfiles; fx++) {
-	fprintf(fp, "%3d %s", fx, fc->fn[fx]);
+	fprintf(fp, "%3d %s", fx, fc->fn[fx].c_str());
 	if (_rpmfc_debug) {
 	    rpmsid cx = fc->fcdictx[fx] + 1; /* id's are one off */
 	    rpm_color_t fcolor = fc->fcolor[fx];
@@ -880,13 +831,13 @@ void rpmfcPrint(const char * msg, rpmfc fc, FILE * fp)
 	}
 	fprintf(fp, "\n");
 
-	if (fc->fddictx == NULL || fc->fddictn == NULL)
+	if (fc->fddictx.empty() || fc->fddictn.empty())
 	    continue;
 
-assert(fx < fc->fddictx->nvals);
-	dx = fc->fddictx->vals[fx];
-assert(fx < fc->fddictn->nvals);
-	ndx = fc->fddictn->vals[fx];
+assert(fx < fc->fddictx.size());
+	dx = fc->fddictx[fx];
+assert(fx < fc->fddictn.size());
+	ndx = fc->fddictn[fx];
 
 	while (ndx-- > 0) {
 	    const char * depval;
@@ -894,7 +845,7 @@ assert(fx < fc->fddictn->nvals);
 	    unsigned ix;
 	    rpmds ds;
 
-	    ix = fc->ddictx->vals[dx++];
+	    ix = fc->ddictx[dx++];
 	    deptype = ((ix >> 24) & 0xff);
 	    ix &= 0x00ffffff;
 	    ds = rpmfcDependencies(fc, rpmdsDToTagN(deptype));
@@ -909,52 +860,33 @@ assert(fx < fc->fddictn->nvals);
 rpmfc rpmfcFree(rpmfc fc)
 {
     if (fc) {
-	for (rpmfcAttr *attr = fc->atypes; attr && *attr; attr++)
-	    rpmfcAttrFree(*attr);
-	free(fc->atypes);
-	free(fc->buildRoot);
+	for (auto const & attr : fc->atypes)
+	    rpmfcAttrFree(attr);
 	for (int i = 0; i < fc->nfiles; i++) {
-	    free(fc->fn[i]);
-	    free(fc->ftype[i]);
 	    argvFree(fc->fattrs[i]);
 	}
-	free(fc->fn);
-	free(fc->ftype);
 	free(fc->fattrs);
-	free(fc->fcolor);
-	free(fc->fcdictx);
 	freePackage(fc->pkg);
-	argiFree(fc->fddictx);
-	argiFree(fc->fddictn);
-	argiFree(fc->ddictx);
 
-	for (int i = 0; i < fc->fileDeps.size; i++) {
-	    rpmdsFree(fc->fileDeps.data[i].dep);
-	}
-	free(fc->fileDeps.data);
+	for (auto & fd : fc->fileDeps)
+	    rpmdsFree(fd.dep);
 
-	fattrHashFree(fc->fahash);
 	rpmstrPoolFree(fc->cdict);
 
 	rpmstrPoolFree(fc->pool);
-	memset(fc, 0, sizeof(*fc)); /* trash and burn */
-	free(fc);
+	delete fc;
     }
     return NULL;
 }
 
 rpmfc rpmfcCreate(const char *buildRoot, rpmFlags flags)
 {
-    rpmfc fc = (rpmfc)xcalloc(1, sizeof(*fc));
+    rpmfc fc = new rpmfc_s {};
     if (buildRoot) {
-	fc->buildRoot = xstrdup(buildRoot);
-	fc->brlen = strlen(buildRoot);
+	fc->buildRoot = buildRoot;
     }
     fc->pool = rpmstrPoolCreate();
-    fc->pkg = (Package)xcalloc(1, sizeof(*fc->pkg));
-    fc->fileDeps.alloced = 10;
-    fc->fileDeps.data = (rpmfcFileDep *)xmalloc(fc->fileDeps.alloced *
-	sizeof(fc->fileDeps.data[0]));
+    fc->pkg = new Package_s {};
     return fc;
 }
 
@@ -1013,24 +945,12 @@ rpmds rpmfcOrderWithRequires(rpmfc fc)
 
 
 /* Versioned deps are less than unversioned deps */
-static int cmpVerDeps(const void *a, const void *b)
+static bool verdepLess(const rpmfcFileDep & fDepA, const rpmfcFileDep & fDepB)
 {
-    rpmfcFileDep *fDepA = (rpmfcFileDep *) a;
-    rpmfcFileDep *fDepB = (rpmfcFileDep *) b;
+    int aIsVersioned = rpmdsFlags(fDepA.dep) & RPMSENSE_SENSEMASK ? 1 : 0;
+    int bIsVersioned = rpmdsFlags(fDepB.dep) & RPMSENSE_SENSEMASK ? 1 : 0;
 
-    int aIsVersioned = rpmdsFlags(fDepA->dep) & RPMSENSE_SENSEMASK ? 1 : 0;
-    int bIsVersioned = rpmdsFlags(fDepB->dep) & RPMSENSE_SENSEMASK ? 1 : 0;
-
-    return bIsVersioned - aIsVersioned;
-}
-
-/* Sort by index */
-static int cmpIndexDeps(const void *a, const void *b)
-{
-    rpmfcFileDep *fDepA = (rpmfcFileDep *) a;
-    rpmfcFileDep *fDepB = (rpmfcFileDep *) b;
-
-    return fDepA->fileIx - fDepB->fileIx;
+    return bIsVersioned < aIsVersioned;
 }
 
 /*
@@ -1040,48 +960,43 @@ static int cmpIndexDeps(const void *a, const void *b)
 static void rpmfcNormalizeFDeps(rpmfc fc)
 {
     rpmstrPool versionedDeps = rpmstrPoolCreate();
-    rpmfcFileDep *normalizedFDeps = (rpmfcFileDep *)xmalloc(fc->fileDeps.size *
-	sizeof(normalizedFDeps[0]));
-    int ix = 0;
+    rpmfcFileDeps normalizedFDeps;
     char *depStr;
 
     /* Sort. Versioned dependencies first */
-    qsort(fc->fileDeps.data, fc->fileDeps.size, sizeof(fc->fileDeps.data[0]),
-	cmpVerDeps);
+    std::sort(fc->fileDeps.begin(), fc->fileDeps.end(), &verdepLess);
 
-    for (int i = 0; i < fc->fileDeps.size; i++) {
-	switch (rpmdsTagN(fc->fileDeps.data[i].dep)) {
+    for (auto const & fdep : fc->fileDeps) {
+	switch (rpmdsTagN(fdep.dep)) {
 	case RPMTAG_REQUIRENAME:
 	case RPMTAG_RECOMMENDNAME:
 	case RPMTAG_SUGGESTNAME:
 	    rasprintf(&depStr, "%08x_%c_%s",
-		fc->fcolor[fc->fileDeps.data[i].fileIx],
-		rpmdsD(fc->fileDeps.data[i].dep),
-		rpmdsN(fc->fileDeps.data[i].dep));
+		fc->fcolor[fdep.fileIx],
+		rpmdsD(fdep.dep),
+		rpmdsN(fdep.dep));
 
-	    if (rpmdsFlags(fc->fileDeps.data[i].dep) & RPMSENSE_SENSEMASK) {
+	    if (rpmdsFlags(fdep.dep) & RPMSENSE_SENSEMASK) {
 		/* preserve versioned require dependency */
-		normalizedFDeps[ix++] = fc->fileDeps.data[i];
+		normalizedFDeps.push_back(fdep);
 		rpmstrPoolId(versionedDeps, depStr, 1);
 	    } else if (!rpmstrPoolId(versionedDeps, depStr, 0)) {
 		/* preserve unversioned require dep only if versioned dep doesn't exist */
-		    normalizedFDeps[ix++] =fc-> fileDeps.data[i];
+		    normalizedFDeps.push_back(fdep);
 	    } else {
-		rpmdsFree(fc->fileDeps.data[i].dep);
+		rpmdsFree(fdep.dep);
 	    }
 	    free(depStr);
 	    break;
 	default:
 	    /* Preserve all non-require dependencies */
-	    normalizedFDeps[ix++] = fc->fileDeps.data[i];
+	    normalizedFDeps.push_back(fdep);
 	    break;
 	}
     }
     rpmstrPoolFree(versionedDeps);
 
-    free(fc->fileDeps.data);
-    fc->fileDeps.data = normalizedFDeps;
-    fc->fileDeps.size = ix;
+    fc->fileDeps = normalizedFDeps; /* vector assignment */
 }
 
 struct applyDep_s {
@@ -1109,15 +1024,29 @@ static int applyAttr(rpmfc fc, int aix,
 			const struct applyDep_s *dep)
 {
     int rc = 0;
-    int n, *ixs;
 
-    if (fattrHashGetEntry(fc->fahash, aix, &ixs, &n, NULL)) {
+    auto range = fc->fahash.equal_range(aix);
+    if (range.first != range.second) {
 	const char *aname = attr->name;
 	char *mname = rstrscat(NULL, "__", aname, "_", dep->name, NULL);
+	std::vector<int> fnx;
+
+	for (auto it = range.first; it != range.second; ++it) {
+	    int fx = it->second;
+	    const char *fn = fc->fn[fx].c_str()+fc->buildRoot.size();
+	    /* If the entire path is filtered out, there's nothing more to do */
+	    if (regMatch(excl->exclude_from, fn))
+		continue;
+
+	    if (regMatch(excl->global_exclude_from, fn))
+		continue;
+
+	    fnx.push_back(fx);
+	}
 
 	if (rpmMacroIsDefined(NULL, mname)) {
-	    char *ns = rpmfcAttrMacro(aname, "namespc", NULL);
-	    rc = rpmfcHelper(fc, ixs, n, attr->proto,
+	    char *ns = rpmfcAttrMacro(aname, "namespace", NULL);
+	    rc = rpmfcHelper(fc, fnx.data(), fnx.size(), attr->proto,
 			    excl, dep->type, dep->tag, ns, mname);
 	    free(ns);
 	}
@@ -1129,7 +1058,6 @@ static int applyAttr(rpmfc fc, int aix,
 static rpmRC rpmfcApplyInternal(rpmfc fc)
 {
     rpmRC rc = RPMRC_OK;
-    rpmds ds, * dsp;
     int previx;
     unsigned int val;
     int dix;
@@ -1149,8 +1077,8 @@ static rpmRC rpmfcApplyInternal(rpmfc fc)
 	if (skip & dep->type)
 	    continue;
 	exclInit(dep->name, &excl);
-	for (rpmfcAttr *attr = fc->atypes; attr && *attr; attr++, aix++) {
-	    if (applyAttr(fc, aix, (*attr), &excl, dep))
+	for (auto const & attr : fc->atypes) {
+	    if (applyAttr(fc, aix++, attr, &excl, dep))
 		rc = RPMRC_FAIL;
 	}
 	exclFini(&excl);
@@ -1158,35 +1086,34 @@ static rpmRC rpmfcApplyInternal(rpmfc fc)
     /* No more additions after this, freeze pool to minimize memory use */
 
     rpmfcNormalizeFDeps(fc);
-    for (int i = 0; i < fc->fileDeps.size; i++) {
-	ds = fc->fileDeps.data[i].dep;
+    for (auto const & fdep : fc->fileDeps) {
+	rpmds ds = fdep.dep;
 	rpmdsMerge(packageDependencies(fc->pkg, rpmdsTagN(ds)), ds);
     }
 
     /* Sort by index */
-    qsort(fc->fileDeps.data, fc->fileDeps.size,
-	sizeof(fc->fileDeps.data[0]), cmpIndexDeps);
+    std::sort(fc->fileDeps.begin(), fc->fileDeps.end());
 
     /* Generate per-file indices into package dependencies. */
     previx = -1;
-    for (int i = 0; i < fc->fileDeps.size; i++) {
-	ds = fc->fileDeps.data[i].dep;
-	ix = fc->fileDeps.data[i].fileIx;
-	dsp = packageDependencies(fc->pkg, rpmdsTagN(ds));
+    for (auto const & fdep : fc->fileDeps) {
+	rpmds ds = fdep.dep;
+	ix = fdep.fileIx;
+	rpmds *dsp = packageDependencies(fc->pkg, rpmdsTagN(ds));
 	dix = rpmdsFind(*dsp, ds);
 	if (dix < 0)
 	    continue;
 
 	val = (rpmdsD(ds) << 24) | (dix & 0x00ffffff);
-	argiAdd(&fc->ddictx, -1, val);
+	fc->ddictx.push_back(val);
 
 	if (previx != ix) {
 	    previx = ix;
-	    argiAdd(&fc->fddictx, ix, argiCount(fc->ddictx)-1);
+	    if (fc->fddictx.size() < ix)
+		fc->fddictx.resize(ix);
+	    fc->fddictx.insert(fc->fddictx.begin() + ix, fc->ddictx.size() - 1);
 	}
-	if (fc->fddictn && fc->fddictn->vals)
-	    fc->fddictn->vals[ix]++;
-
+	fc->fddictn[ix]++;
     }
     return rc;
 }
@@ -1219,12 +1146,10 @@ static int initAttrs(rpmfc fc)
 
     /* Initialize attr objects */
     nattrs = argvCount(all_attrs);
-    fc->atypes = (rpmfcAttr*)xcalloc(nattrs + 1, sizeof(*fc->atypes));
 
     for (int i = 0; i < nattrs; i++) {
-	fc->atypes[i] = rpmfcAttrNew(all_attrs[i]);
+	fc->atypes.push_back(rpmfcAttrNew(all_attrs[i]));
     }
-    fc->atypes[nattrs] = NULL;
 
     free(attrPath);
     free(local_attr_names);
@@ -1306,16 +1231,15 @@ rpmRC rpmfcClassify(rpmfc fc, ARGV_t argv, rpm_mode_t * fmode)
     }
 
     fc->nfiles = argvCount(argv);
-    fc->fn = (char **)xcalloc(fc->nfiles, sizeof(*fc->fn));
-    fc->ftype = (char **)xcalloc(fc->nfiles, sizeof(*fc->ftype));
+    fc->fn.assign(fc->nfiles, "");
+    fc->ftype.assign(fc->nfiles, "");
     fc->fattrs = (ARGV_t *)xcalloc(fc->nfiles, sizeof(*fc->fattrs));
-    fc->fcolor = (rpm_color_t *)xcalloc(fc->nfiles, sizeof(*fc->fcolor));
-    fc->fcdictx = (rpmsid *)xcalloc(fc->nfiles, sizeof(*fc->fcdictx));
-    fc->fahash = fattrHashCreate(fc->nfiles / 3, intId, intCmp, NULL, NULL);
+    fc->fcolor.assign(fc->nfiles, 0);
+    fc->fcdictx.assign(fc->nfiles, 0);
 
     /* Initialize the per-file dictionary indices. */
-    argiAdd(&fc->fddictx, fc->nfiles-1, 0);
-    argiAdd(&fc->fddictn, fc->nfiles-1, 0);
+    fc->fddictx.assign(fc->nfiles, 0);
+    fc->fddictn.assign(fc->nfiles, 0);
 
     /* Build (sorted) file class dictionary. */
     fc->cdict = rpmstrPoolCreate();
@@ -1372,7 +1296,8 @@ rpmRC rpmfcClassify(rpmfc fc, ARGV_t argv, rpm_mode_t * fmode)
 	    }
 
 	    /* XXX skip all files in /dev/ which are (or should be) %dev dummies. */
-	    if (slen >= fc->brlen+sizeof("/dev/") && rstreqn(s+fc->brlen, "/dev/", sizeof("/dev/")-1))
+	    size_t brlen = fc->buildRoot.size();
+	    if (slen >= brlen+sizeof("/dev/") && rstreqn(s+brlen, "/dev/", sizeof("/dev/")-1))
 		ftype = "";
 	    else if (ftype == NULL) {
 		ftype = magic_file(ms, s);
@@ -1414,7 +1339,7 @@ rpmRC rpmfcClassify(rpmfc fc, ARGV_t argv, rpm_mode_t * fmode)
 	rpmlog(RPMLOG_DEBUG, "%s: %s (%s)\n", s, fmime, ftype);
 
 	/* Save the path. */
-	fc->fn[ix] = xstrdup(s);
+	fc->fn[ix] = s;
 
 	/* Add (filtered) file coloring */
 	fcolor |= rpmfcColor(ftype);
@@ -1423,7 +1348,7 @@ rpmRC rpmfcClassify(rpmfc fc, ARGV_t argv, rpm_mode_t * fmode)
 	rpmfcAttributes(fc, ix, ftype, fmime, s);
 
 	if (fcolor != RPMFC_WHITE && (fcolor & RPMFC_INCLUDE))
-	    fc->ftype[ix] = xstrdup(ftype);
+	    fc->ftype[ix] = ftype;
 
 	/* Add ELF colors */
 	if (S_ISREG(mode) && is_executable)
@@ -1439,14 +1364,14 @@ rpmRC rpmfcClassify(rpmfc fc, ARGV_t argv, rpm_mode_t * fmode)
 
     /* Add to file class dictionary and index array */
     for (int ix = 0; ix < fc->nfiles; ix++) {
-	const char *ftype = fc->ftype[ix] ? fc->ftype[ix] : "";
+	const string & ftype = fc->ftype[ix].c_str();
 	/* Pool id's start from 1, for headers we want it from 0 */
-	fc->fcdictx[ix] = rpmstrPoolId(fc->cdict, ftype, 1) - 1;
+	fc->fcdictx[ix] = rpmstrPoolId(fc->cdict, ftype.c_str(), 1) - 1;
 
-	if (*ftype)
-	    fc->fknown++;
-	else
+	if (ftype.empty())
 	    fc->fwhite++;
+	else
+	    fc->fknown++;
     }
 
     if (nerrors == 0)
@@ -1687,21 +1612,18 @@ rpmRC rpmfcApply(rpmfc fc)
 
 rpmRC rpmfcGenerateDepends(const rpmSpec spec, Package pkg)
 {
-    rpmfi fi = rpmfilesIter(pkg->cpioList, RPMFI_ITER_FWD);
     rpmfc fc = NULL;
-    rpm_mode_t * fmode = NULL;
-    int ac = rpmfiFC(fi);
+    int ac = rpmfilesFC(pkg->cpioList);
     int genConfigDeps = 0;
     rpmRC rc = RPMRC_OK;
     int idx;
-    struct rpmtd_s td;
 
     /* Skip packages with no files. */
-    if (ac <= 0)
-	goto exit;
+    if (ac == 0)
+	return rc;
 
     /* Extract absolute file paths in argv format. */
-    fmode = (rpm_mode_t *)xcalloc(ac+1, sizeof(*fmode));
+    vector<rpm_mode_t> fmode(ac+1, 0);
 
     fc = rpmfcCreate(spec->buildRoot, 0);
     freePackage(fc->pkg);
@@ -1709,7 +1631,7 @@ rpmRC rpmfcGenerateDepends(const rpmSpec spec, Package pkg)
     fc->skipProv = !pkg->autoProv;
     fc->skipReq = !pkg->autoReq;
 
-    fi = rpmfiInit(fi, 0);
+    rpmfi fi = rpmfilesIter(pkg->cpioList, RPMFI_ITER_FWD);
     while ((idx = rpmfiNext(fi)) >= 0) {
 	/* Does package have any %config files? */
 	genConfigDeps |= (rpmfiFFlags(fi) & RPMFILE_CONFIG);
@@ -1757,7 +1679,7 @@ rpmRC rpmfcGenerateDepends(const rpmSpec spec, Package pkg)
     }
 
     /* Build file class dictionary. */
-    rc = rpmfcClassify(fc, pkg->dpaths, fmode);
+    rc = rpmfcClassify(fc, pkg->dpaths, fmode.data());
     if ( rc != RPMRC_OK )
 	goto exit;
 
@@ -1767,7 +1689,7 @@ rpmRC rpmfcGenerateDepends(const rpmSpec spec, Package pkg)
 	goto exit;
 
     /* Add per-file colors(#files) */
-    headerPutUint32(pkg->header, RPMTAG_FILECOLORS, fc->fcolor, fc->nfiles);
+    headerPutUint32(pkg->header, RPMTAG_FILECOLORS, fc->fcolor.data(), fc->nfiles);
     
     /* Add classes(#classes) */
     for (rpmsid id = 1; id <= rpmstrPoolNumStr(fc->cdict); id++) {
@@ -1776,28 +1698,26 @@ rpmRC rpmfcGenerateDepends(const rpmSpec spec, Package pkg)
     }
 
     /* Add per-file classes(#files) */
-    headerPutUint32(pkg->header, RPMTAG_FILECLASS, fc->fcdictx, fc->nfiles);
+    headerPutUint32(pkg->header, RPMTAG_FILECLASS, fc->fcdictx.data(), fc->nfiles);
 
     /* Add dependency dictionary(#dependencies) */
-    if (rpmtdFromArgi(&td, RPMTAG_DEPENDSDICT, fc->ddictx)) {
-	headerPut(pkg->header, &td, HEADERPUT_DEFAULT);
+    if (!fc->ddictx.empty()) {
+	headerPutUint32(pkg->header, RPMTAG_DEPENDSDICT,
+			fc->ddictx.data(), fc->ddictx.size());
 
 	/* Add per-file dependency (start,number) pairs (#files) */
-	if (rpmtdFromArgi(&td, RPMTAG_FILEDEPENDSX, fc->fddictx)) {
-	    headerPut(pkg->header, &td, HEADERPUT_DEFAULT);
-	}
-
-	if (rpmtdFromArgi(&td, RPMTAG_FILEDEPENDSN, fc->fddictn)) {
-	    headerPut(pkg->header, &td, HEADERPUT_DEFAULT);
-	}
+	headerPutUint32(pkg->header, RPMTAG_FILEDEPENDSX,
+			fc->fddictx.data(), fc->fddictx.size());
+	headerPutUint32(pkg->header, RPMTAG_FILEDEPENDSN,
+			fc->fddictn.data(), fc->fddictn.size());
     }
 
 
     if (_rpmfc_debug) {
 	char *msg = NULL;
-	rasprintf(&msg, "final: files %d cdict[%d] %d%% ddictx[%d]",
+	rasprintf(&msg, "final: files %d cdict[%d] %d%% ddictx[%zu]",
 		  fc->nfiles, rpmstrPoolNumStr(fc->cdict),
-		  ((100 * fc->fknown)/fc->nfiles), argiCount(fc->ddictx));
+		  ((100 * fc->fknown)/fc->nfiles), fc->ddictx.size());
 	rpmfcPrint(msg, fc, NULL);
 	free(msg);
     }
@@ -1807,7 +1727,6 @@ exit:
     /* Clean up. */
     if (fc)
 	fc->pkg = NULL;
-    free(fmode);
     rpmfcFree(fc);
     rpmfiFree(fi);
 

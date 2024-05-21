@@ -20,24 +20,14 @@
 
 #define SKIPSPACE(s) { while (*(s) && risspace(*(s))) (s)++; }
 
-/**
- * @param p		trigger entry chain
- * @return		NULL always
- */
-static inline
-struct TriggerFileEntry * freeTriggerFiles(struct TriggerFileEntry * p)
+static void freeTriggerFiles(std::vector<TriggerFileEntry> &triggers)
 {
-    struct TriggerFileEntry *o, *q = p;
-    
-    while (q != NULL) {
-	o = q;
-	q = q->next;
-	o->fileName = _free(o->fileName);
-	o->script = _free(o->script);
-	o->prog = _free(o->prog);
-	free(o);
+    for (auto & e : triggers) {
+	free(e.fileName);
+	free(e.script);
+	free(e.prog);
     }
-    return NULL;
+    triggers.clear();
 }
 
 struct Source * freeSources(struct Source * s)
@@ -49,7 +39,7 @@ struct Source * freeSources(struct Source * s)
 	t = t->next;
 	r->fullSource = _free(r->fullSource);
 	r->path = _free(r->path);
-	free(r);
+	delete r;
     }
     return NULL;
 }
@@ -102,7 +92,7 @@ rpmRC lookupPackage(rpmSpec spec, const char *name, int flag,Package *pkg)
 
 Package newPackage(const char *name, rpmstrPool pool, Package *pkglist)
 {
-    Package p = (Package)xcalloc(1, sizeof(*p));
+    Package p = new Package_s {};
     p->header = headerNew();
     p->autoProv = 1;
     p->autoReq = 1;
@@ -110,7 +100,6 @@ Package newPackage(const char *name, rpmstrPool pool, Package *pkglist)
     p->fileExcludeList = NULL;
     p->fileFile = NULL;
     p->policyList = NULL;
-    p->fileRenameMap = NULL;
     p->pool = rpmstrPoolLink(pool);
     p->dpaths = NULL;
     p->rpmver = rpmExpandNumeric("%_rpmfilever");
@@ -161,17 +150,16 @@ Package freePackage(Package pkg)
     pkg->fileFile = argvFree(pkg->fileFile);
     pkg->policyList = argvFree(pkg->policyList);
     pkg->removePostfixes = argvFree(pkg->removePostfixes);
-    pkg->fileRenameMap = fileRenameHashFree(pkg->fileRenameMap);
     pkg->cpioList = rpmfilesFree(pkg->cpioList);
     pkg->dpaths = argvFree(pkg->dpaths);
 
     pkg->icon = freeSources(pkg->icon);
-    pkg->triggerFiles = freeTriggerFiles(pkg->triggerFiles);
-    pkg->fileTriggerFiles = freeTriggerFiles(pkg->fileTriggerFiles);
-    pkg->transFileTriggerFiles = freeTriggerFiles(pkg->transFileTriggerFiles);
+    freeTriggerFiles(pkg->triggerFiles);
+    freeTriggerFiles(pkg->fileTriggerFiles);
+    freeTriggerFiles(pkg->transFileTriggerFiles);
     pkg->pool = rpmstrPoolFree(pkg->pool);
 
-    free(pkg);
+    delete pkg;
     return NULL;
 }
 
@@ -203,7 +191,7 @@ rpmds * packageDependencies(Package pkg, rpmTagVal tag)
 
 rpmSpec newSpec(void)
 {
-    rpmSpec spec = (rpmSpec)xcalloc(1, sizeof(*spec));
+    rpmSpec spec = new rpmSpec_s {};
     
     spec->specFile = NULL;
 
@@ -215,7 +203,7 @@ rpmSpec newSpec(void)
     spec->nextline = NULL;
     spec->nextpeekc = '\0';
     spec->lineNum = 0;
-    spec->readStack = (struct ReadLevelEntry*)xcalloc(1, sizeof(*spec->readStack));
+    spec->readStack = new ReadLevelEntry {};
     spec->readStack->next = NULL;
     spec->readStack->reading = 1;
     spec->readStack->lastConditional = lineTypes;
@@ -271,7 +259,7 @@ rpmSpec rpmSpecFree(rpmSpec spec)
 	struct ReadLevelEntry *rl = spec->readStack;
 	spec->readStack = rl->next;
 	rl->next = NULL;
-	free(rl);
+	delete rl;
     }
     spec->lbuf = _free(spec->lbuf);
     
@@ -308,9 +296,8 @@ rpmSpec rpmSpecFree(rpmSpec spec)
 
     spec->buildHost = _free(spec->buildHost);
 
-    spec = _free(spec);
-
-    return spec;
+    delete spec;
+    return NULL;
 }
 
 Header rpmSpecSourceHeader(rpmSpec spec)
@@ -344,7 +331,7 @@ struct rpmSpecIter_s {
 #define SPEC_LISTITER_INIT(_itertype, _iteritem)	\
     _itertype iter = NULL;				\
     if (spec) {						\
-	iter = (_itertype)xcalloc(1, sizeof(*iter));		\
+	iter = new rpmSpecIter_s {};			\
 	iter->next = spec->_iteritem;			\
     }							\
     return iter
@@ -358,7 +345,7 @@ struct rpmSpecIter_s {
     return item
 
 #define SPEC_LISTITER_FREE()				\
-    free(iter);						\
+    delete iter;					\
     return NULL
 
 

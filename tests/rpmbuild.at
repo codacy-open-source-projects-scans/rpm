@@ -1089,12 +1089,25 @@ RPMTEST_CHECK([
 RPMDB_INIT
 
 runroot rpmbuild -bb --quiet \
-		--define '__script_requires() foo(%{basename:%{1}})' \
+		--define '__script_requires() \
+					foo(%{basename:%{1}})\
+					many(%{basename:%{1}}) = 55\
+					many(%{basename:%{1}}) = 99\
+					many(%{basename:%{1}})\
+					bar(%{basename:%{1}}) = 33\
+					bar(%{basename:%{1}})\
+					bar(%{basename:%{1}}) = 66\
+					one(%{basename:%{1}}) = 77'\
 		/data/SPECS/shebang.spec
 runroot rpm -qp --requires /build/RPMS/noarch/shebang-0.1-1.noarch.rpm|grep -v ^rpmlib
 ],
 [0],
-[foo(shebang)
+[bar(shebang) = 33
+bar(shebang) = 66
+foo(shebang)
+many(shebang) = 55
+many(shebang) = 99
+one(shebang) = 77
 ],
 [])
 RPMTEST_CLEANUP
@@ -1107,11 +1120,12 @@ RPMDB_INIT
 runroot rpmbuild -bb --quiet \
 		--define '__script_mime text/plain' \
 		--define '__script_magic %{nil}' \
+		--define '__script_namespace mine' \
 		/data/SPECS/shebang.spec
 runroot rpm -qp --requires /build/RPMS/noarch/shebang-0.1-1.noarch.rpm|grep -v ^rpmlib
 ],
 [0],
-[/bin/blabla
+[mine(/bin/blabla)
 ],
 [])
 RPMTEST_CLEANUP
@@ -2210,7 +2224,19 @@ No hello.debug
 [ignore])
 RPMTEST_CLEANUP
 
+AT_SETUP([explicit %_enable_debug_package on noarch])
+AT_KEYWORDS([build debuginfo])
+RPMTEST_CHECK([
+RPMDB_INIT
 
+runroot rpmbuild --quiet -bb \
+		--define "%_enable_debug_packages 1" \
+		/data/SPECS/hlinktest.spec
+],
+[0],
+[ignore],
+[ignore])
+RPMTEST_CLEANUP
 
 # ------------------------------
 # Check dynamic build requires

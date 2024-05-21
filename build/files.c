@@ -6,6 +6,9 @@
 
 #include "system.h"
 
+#include <vector>
+#include <algorithm>
+
 #define	MYALLPERMS	07777
 
 #include <errno.h>
@@ -50,14 +53,6 @@
 #define DEBUG_ID_DIR		"/usr/lib/debug/.build-id"
 #define DEBUG_DWZ_DIR 		"/usr/lib/debug/.dwz"
 
-#define HASHTYPE fileRenameHash
-#define HTKEYTYPE const char *
-#define HTDATATYPE const char *
-#include "rpmhash.C"
-#undef HASHTYPE
-#undef HTKEYTYPE
-#undef HTDATATYPE
-
 /**
  */
 enum specfFlags_e {
@@ -89,7 +84,7 @@ enum parseAttrs_e {
 
 /**
  */
-typedef struct FileListRec_s {
+struct FileListRec_s {
     struct stat fl_st;
 #define	fl_dev	fl_st.st_dev
 #define	fl_ino	fl_st.st_ino
@@ -108,7 +103,14 @@ typedef struct FileListRec_s {
     rpmVerifyFlags verifyFlags;
     char *langs;		/* XXX locales separated with | */
     char *caps;
-} * FileListRec;
+
+    bool operator < (const FileListRec_s & other) const
+    {
+	return strcmp(cpioPath, other.cpioPath) < 0;
+    }
+};
+
+typedef struct FileListRec_s * FileListRec;
 
 /**
  */
@@ -152,17 +154,10 @@ typedef struct specialDir_s {
     struct AttrRec_s def_ar;
     rpmFlags sdtype;
 
-    int entriesCount;
-    int entriesAlloced;
-
-    struct FileEntries_s *entries;
+    std::vector<FileEntries_s> entries;
 } * specialDir;
 
-typedef struct FileRecords_s {
-    FileListRec recs;
-    int alloced;
-    int used;
-} * FileRecords;
+typedef std::vector<FileListRec_s> FileRecords;
 
 /**
  * Package file tree walk data.
@@ -179,7 +174,7 @@ typedef struct FileList_s {
     rpmstrPool pool;
 
     /* actual file records */
-    struct FileRecords_s files;
+    FileRecords files;
 
     /* active defaults */
     struct FileEntry_s def;
@@ -940,15 +935,6 @@ static rpmRC parseForSimple(char * buf, FileEntry cur, ARGV_t * fileNames)
 }
 
 /**
- */
-static int compareFileListRecs(const void * ap, const void * bp)	
-{
-    const char *a = ((FileListRec)ap)->cpioPath;
-    const char *b = ((FileListRec)bp)->cpioPath;
-    return strcmp(a, b);
-}
-
-/**
  * Test if file is located in a %docdir.
  * @param docDirs	doc dirs
  * @param fileName	file path
@@ -986,18 +972,15 @@ static int isHardLink(FileListRec flp, FileListRec tlp)
  * @param files		package file records
  * @return		1 if partial hardlink sets can exist, 0 otherwise.
  */
-static int checkHardLinks(FileRecords files)
+static int checkHardLinks(FileRecords & files)
 {
-    FileListRec ilp, jlp;
-    int i, j;
-
-    for (i = 0;  i < files->used; i++) {
-	ilp = files->recs + i;
+    for (int i = 0;  i < files.size(); i++) {
+	FileListRec ilp = &files[i];
 	if (!(isLinkable(ilp->fl_mode) && ilp->fl_nlink > 1))
 	    continue;
 
-	for (j = i + 1; j < files->used; j++) {
-	    jlp = files->recs + j;
+	for (int j = i + 1; j < files.size(); j++) {
+	    FileListRec jlp = &files[j];
 	    if (isHardLink(ilp, jlp)) {
 		return 1;
 	    }
@@ -1006,11 +989,11 @@ static int checkHardLinks(FileRecords files)
     return 0;
 }
 
-static int seenHardLink(FileRecords files, FileListRec flp, rpm_ino_t *fileid)
+static int seenHardLink(FileRecords & files, FileListRec flp, rpm_ino_t *fileid)
 {
-    for (FileListRec ilp = files->recs; ilp < flp; ilp++) {
+    for (FileListRec ilp = files.data(); ilp < flp; ilp++) {
 	if (isHardLink(flp, ilp)) {
-	    *fileid = ilp - files->recs;
+	    *fileid = ilp - files.data();
 	    return 1;
 	}
     }
@@ -1092,11 +1075,8 @@ static void genCpioListAndHeader(FileList fl, rpmSpec spec, Package pkg, int isS
 
     /* Adjust paths if needed */
     if (!isSrc && pkg->removePostfixes) {
-	pkg->fileRenameMap = fileRenameHashCreate(fl->files.used,
-	                                          rstrhash, strcmp,
-	                                          (fileRenameHashFreeKey)rfree, (fileRenameHashFreeData)rfree);
-	for (i = 0, flp = fl->files.recs; i < fl->files.used; i++, flp++) {
-	    char * cpiopath = flp->cpioPath;
+	for (auto const & fl : fl->files) {
+	    char * cpiopath = fl.cpioPath;
 	    char * cpiopath_orig = xstrdup(cpiopath);
 
 	    for (ARGV_const_t postfix_p = pkg->removePostfixes; *postfix_p; postfix_p++) {
@@ -1110,26 +1090,22 @@ static void genCpioListAndHeader(FileList fl, rpmSpec spec, Package pkg, int isS
 		}
 	    }
 	    if (strcmp(cpiopath_orig, cpiopath))
-		fileRenameHashAddEntry(pkg->fileRenameMap, xstrdup(cpiopath), cpiopath_orig);
-	    else
-		_free(cpiopath_orig);
+		pkg->fileRenameMap.insert({cpiopath, cpiopath_orig});
+	    _free(cpiopath_orig);
 	}
     }
 
     /* Sort the big list */
-    if (fl->files.recs) {
-	qsort(fl->files.recs, fl->files.used,
-	      sizeof(*(fl->files.recs)), compareFileListRecs);
-    }
+    std::sort(fl->files.begin(), fl->files.end());
     
-    pkg->dpaths = (char **)xmalloc((fl->files.used + 1) * sizeof(*pkg->dpaths));
+    pkg->dpaths = (char **)xmalloc((fl->files.size() + 1) * sizeof(*pkg->dpaths));
 
     /* Generate the header. */
-    for (i = 0, flp = fl->files.recs; i < fl->files.used; i++, flp++) {
-	rpm_ino_t fileid = flp - fl->files.recs;
+    for (i = 0, flp = fl->files.data(); i < fl->files.size(); i++, flp++) {
+	rpm_ino_t fileid = flp - fl->files.data();
 
  	/* Merge duplicate entries. */
-	while (i < (fl->files.used - 1) &&
+	while (i < (fl->files.size() - 1) &&
 	    rstreq(flp->cpioPath, flp[1].cpioPath)) {
 
 	    /* Two entries for the same file found, merge the entries. */
@@ -1209,7 +1185,7 @@ static void genCpioListAndHeader(FileList fl, rpmSpec spec, Package pkg, int isS
 	}
 	/* Excludes and dupes have been filtered out by now. */
 	if (isLinkable(flp->fl_mode)) {
-	    if (flp->fl_nlink == 1 || !seenHardLink(&fl->files, flp, &fileid)) {
+	    if (flp->fl_nlink == 1 || !seenHardLink(fl->files, flp, &fileid)) {
 		totalFileSize += flp->fl_size;
 	    }
 	}
@@ -1340,23 +1316,22 @@ static void genCpioListAndHeader(FileList fl, rpmSpec spec, Package pkg, int isS
     }
 }
 
-static FileRecords FileRecordsFree(FileRecords files)
+static void FileRecordsFree(FileRecords & files)
 {
-    for (int i = 0; i < files->used; i++) {
-	free(files->recs[i].diskPath);
-	free(files->recs[i].cpioPath);
-	free(files->recs[i].langs);
-	free(files->recs[i].caps);
+    for (auto & rec : files) {
+	free(rec.diskPath);
+	free(rec.cpioPath);
+	free(rec.langs);
+	free(rec.caps);
     }
-    free(files->recs);
-    return NULL;
+    files.clear();
 }
 
 static void FileListFree(FileList fl)
 {
     FileEntryFree(&(fl->cur));
     FileEntryFree(&(fl->def));
-    FileRecordsFree(&(fl->files));
+    FileRecordsFree(fl->files);
     free(fl->buildRoot);
     argvFree(fl->docDirs);
     rpmstrPoolFree(fl->pool);
@@ -1553,13 +1528,9 @@ static rpmRC addFile(FileList fl, const char * diskPath,
     }
 
     /* Add to the file list */
-    if (fl->files.used == fl->files.alloced) {
-	fl->files.alloced += 128;
-	fl->files.recs = xrealloc(fl->files.recs,
-			fl->files.alloced * sizeof(*(fl->files.recs)));
-    }
+    fl->files.push_back({});
 	    
-    {	FileListRec flp = &fl->files.recs[fl->files.used];
+    {	FileListRec flp = &fl->files.back();
 
 	flp->fl_st = *statp;	/* structure assignment */
 	flp->fl_mode = fileMode;
@@ -1595,7 +1566,6 @@ static rpmRC addFile(FileList fl, const char * diskPath,
     }
 
     rc = RPMRC_OK;
-    fl->files.used++;
 
 exit:
     if (rc != RPMRC_OK)
@@ -1898,7 +1868,7 @@ static int generateBuildIDs(FileList fl, ARGV_t *files)
     /* Collect and check all build-ids for ELF files in this package.  */
     int needMain = 0;
     int needDbg = 0;
-    for (i = 0, flp = fl->files.recs; i < fl->files.used; i++, flp++) {
+    for (i = 0, flp = fl->files.data(); i < fl->files.size(); i++, flp++) {
 	struct stat sbuf;
 	if (lstat(flp->diskPath, &sbuf) == 0 && S_ISREG (sbuf.st_mode)) {
 	    /* We determine whether this is a main or
@@ -2360,12 +2330,7 @@ static char * getSpecialDocDir(Header h, rpmFlags sdtype)
 
 static specialDir specialDirNew(Header h, rpmFlags sdtype)
 {
-    specialDir sd = (specialDir)xcalloc(1, sizeof(*sd));
-
-    sd->entriesCount = 0;
-    sd->entriesAlloced = 10;
-    sd->entries = (struct FileEntries_s *)xcalloc(sd->entriesAlloced, sizeof(*(sd->entries)));
-
+    specialDir sd = new specialDir_s {};
     sd->dirname = getSpecialDocDir(h, sdtype);
     sd->sdtype = sdtype;
     return sd;
@@ -2376,30 +2341,23 @@ static void addSpecialFile(specialDir sd, const char *path, FileEntry cur,
 {
     argvAdd(&sd->files, path);
 
-    if (sd->entriesCount >= sd->entriesAlloced) {
-	sd->entriesAlloced <<= 1;
-	sd->entries = xrealloc(sd->entries, sd->entriesAlloced *
-	    sizeof(sd->entries[0]));
-    }
+    sd->entries.push_back({});
+    auto & entry = sd->entries.back();
 
-    copyFileEntry(cur, &sd->entries[sd->entriesCount].curEntry);
-    copyFileEntry(def, &sd->entries[sd->entriesCount].defEntry);
-    sd->entriesCount++;
+    copyFileEntry(cur, &entry.curEntry);
+    copyFileEntry(def, &entry.defEntry);
 }
 
 static specialDir specialDirFree(specialDir sd)
 {
-    int i = 0;
-
     if (sd) {
 	argvFree(sd->files);
 	free(sd->dirname);
-	for (i = 0; i < sd->entriesCount; i++) {
-	    FileEntryFree(&sd->entries[i].curEntry);
-	    FileEntryFree(&sd->entries[i].defEntry);
+	for (auto & entry : sd->entries) {
+	    FileEntryFree(&entry.curEntry);
+	    FileEntryFree(&entry.defEntry);
 	}
-	free(sd->entries);
-	free(sd);
+	delete sd;
     }
     return NULL;
 }
@@ -2411,7 +2369,7 @@ static void processSpecialDir(rpmSpec spec, Package pkg, FileList fl,
     const char *sdname = (sd->sdtype == RPMFILE_DOC) ? "%doc" : "%license";
     char *mkdocdir = rpmExpand("%{__mkdir_p} $", sdenv, NULL);
     StringBuf docScript = newStringBuf();
-    int count = sd->entriesCount;
+    int count = sd->entries.size();
     char *basepath = rpmGenPath(spec->rootDir, "%{builddir}", "%{?buildsubdir}");
     ARGV_t *files = (ARGV_t *)xmalloc(sizeof(*files) * count);
     int i, j;
@@ -2610,7 +2568,7 @@ static void addPackageFileList (struct FileList_s *fl, Package pkg,
 static rpmRC processPackageFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags,
 				 Package pkg, int didInstall, int test)
 {
-    struct FileList_s fl;
+    struct FileList_s fl {};
     specialDir specialDoc = NULL;
     specialDir specialLic = NULL;
 
@@ -2621,8 +2579,6 @@ static rpmRC processPackageFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags,
 	    return RPMRC_FAIL;
     }
     /* Init the file list structure */
-    memset(&fl, 0, sizeof(fl));
-
     fl.pool = rpmstrPoolLink(spec->pool);
     /* XXX spec->buildRoot == NULL, then xstrdup("") is returned */
     fl.buildRoot = rpmGenPath(spec->rootDir, spec->buildRoot, NULL);
@@ -2674,7 +2630,7 @@ static rpmRC processPackageFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags,
 #endif
 
     /* Verify that file attributes scope over hardlinks correctly. */
-    if (checkHardLinks(&fl.files))
+    if (checkHardLinks(fl.files))
 	(void) rpmlibNeedsFeature(pkg, "PartialHardlinkSets", "4.0.4-1");
 
     genCpioListAndHeader(&fl, spec, pkg, 0);
@@ -2689,7 +2645,7 @@ exit:
 rpmRC processSourceFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags)
 {
     struct Source *srcPtr;
-    struct FileList_s fl;
+    struct FileList_s fl {};
     ARGV_t files = NULL;
     Package pkg;
     Package sourcePkg = spec->sourcePackage;
@@ -2725,15 +2681,12 @@ rpmRC processSourceFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags)
     sourcePkg->cpioList = NULL;
 
     /* Init the file list structure */
-    memset(&fl, 0, sizeof(fl));
     fl.pool = rpmstrPoolLink(spec->pool);
     if (_srcdefattr) {
 	char *a = rstrscat(NULL, "%defattr ", _srcdefattr, NULL);
 	parseForAttr(fl.pool, a, 1, &fl.def);
 	free(a);
     }
-    fl.files.alloced = spec->numSources + 1;
-    fl.files.recs = (FileListRec)xcalloc(fl.files.alloced, sizeof(*fl.files.recs));
     fl.pkgFlags = pkgFlags;
 
     for (ARGV_const_t fp = files; *fp != NULL; fp++) {
@@ -2745,10 +2698,11 @@ rpmRC processSourceFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags)
 	if (! *diskPath)
 	    continue;
 
-	flp = &fl.files.recs[fl.files.used];
+	fl.files.push_back({});
+	flp = &fl.files.back();
 
 	/* The first source file is the spec file */
-	flp->flags = (fl.files.used == 0) ? RPMFILE_SPECFILE : 0;
+	flp->flags = (fl.files.size() == 1) ? RPMFILE_SPECFILE : 0;
 	/* files with leading ! are no source files */
 	if (*diskPath == '!') {
 	    flp->flags |= RPMFILE_GHOST;
@@ -2790,7 +2744,6 @@ rpmRC processSourceFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags)
 	}
 
 	flp->langs = xstrdup("");
-	fl.files.used++;
     }
     argvFree(files);
 
@@ -2948,15 +2901,14 @@ static void filterDebuginfoPackage(rpmSpec spec, Package pkg,
 	    namel -= 6;
 
 	/* fileRenameMap doesn't necessarily have to be initialized */
-	if (pkg->fileRenameMap) {
-	    const char **names = NULL;
-	    int namec = 0;
-	    fileRenameHashGetEntry(pkg->fileRenameMap, name, &names, &namec, NULL);
-	    if (namec) {
-		if (namec > 1)
+	if (!pkg->fileRenameMap.empty()) {
+	    auto range = pkg->fileRenameMap.equal_range(name);
+	    if (range.first != range.second) {
+		if (std::distance(range.first, range.second) > 1)
 		    rpmlog(RPMLOG_WARNING, _("%s was mapped to multiple filenames"), name);
-		name = *names;
-		namel = strlen(name);
+		auto & it = range.first;
+		name = it->second.c_str();
+		namel = it->second.size();
 	    }
 	}
 	
