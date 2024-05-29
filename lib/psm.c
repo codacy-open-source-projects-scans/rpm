@@ -63,37 +63,25 @@ static rpmRC markReplacedFiles(const rpmpsm psm)
     rpmfs fs = rpmteGetFileStates(psm->te);
     sharedFileInfo replaced = rpmfsGetReplaced(fs);
     sharedFileInfo sfi;
-    rpmdbMatchIterator mi;
     Header h;
-    unsigned int * offsets;
-    unsigned int prev;
-    unsigned int num;
 
     if (!replaced)
 	return RPMRC_OK;
 
-    num = prev = 0;
+    std::vector<unsigned int> offsets;
+    unsigned int prev = 0;
+
     for (sfi = replaced; sfi; sfi=rpmfsNextReplaced(fs, sfi)) {
 	if (prev && prev == sfi->otherPkg)
 	    continue;
 	prev = sfi->otherPkg;
-	num++;
+	offsets.push_back(sfi->otherPkg);
     }
-    if (num == 0)
+    if (offsets.empty())
 	return RPMRC_OK;
 
-    offsets = (unsigned int *)xmalloc(num * sizeof(*offsets));
-    offsets[0] = 0;
-    num = prev = 0;
-    for (sfi = replaced; sfi; sfi=rpmfsNextReplaced(fs, sfi)) {
-	if (prev && prev == sfi->otherPkg)
-	    continue;
-	prev = sfi->otherPkg;
-	offsets[num++] = sfi->otherPkg;
-    }
-
-    mi = rpmtsInitIterator(ts, RPMDBI_PACKAGES, NULL, 0);
-    rpmdbAppendIterator(mi, offsets, num);
+    rpmdbMatchIterator mi = rpmtsInitIterator(ts, RPMDBI_PACKAGES, NULL, 0);
+    rpmdbAppendIterator(mi, offsets.data(), offsets.size());
     rpmdbSetIteratorRewrite(mi, 1);
 
     sfi = replaced;
@@ -106,7 +94,6 @@ static rpmRC markReplacedFiles(const rpmpsm psm)
 	    continue;
 	
 	prev = rpmdbGetIteratorOffset(mi);
-	num = 0;
 	while (sfi && sfi->otherPkg == prev) {
 	    int ix = rpmtdSetIndex(&secStates, sfi->otherFileNum);
 	    assert(ix != -1);
@@ -119,14 +106,12 @@ static rpmRC markReplacedFiles(const rpmpsm psm)
 		    modified = 1;
 		    rpmdbSetIteratorModified(mi, modified);
 		}
-		num++;
 	    }
 	    sfi=rpmfsNextReplaced(fs, sfi);
 	}
 	rpmtdFreeData(&secStates);
     }
     rpmdbFreeIterator(mi);
-    free(offsets);
 
     return RPMRC_OK;
 }
@@ -437,7 +422,7 @@ exit:
  */
 static rpmRC handleOneTrigger(rpmts ts, rpmte te, rpmsenseFlags sense,
 			Header sourceH, Header trigH, int countCorrection,
-			int arg2, unsigned char * triggersAlreadyRun)
+			int arg2, uint8_t * triggersAlreadyRun)
 {
     rpmds trigger = rpmdsInit(rpmdsNew(trigH, RPMTAG_TRIGGERNAME, 0));
     struct rpmtd_s pfx;
@@ -543,7 +528,6 @@ static rpmRC runTriggers(rpmpsm psm, rpmsenseFlags sense)
 static rpmRC runImmedTriggers(rpmpsm psm, rpmsenseFlags sense)
 {
     const rpmts ts = psm->ts;
-    uint8_t * triggersRun;
     struct rpmtd_s tnames, tindexes;
     Header h = rpmteHeader(psm->te);
     int nerrors = 0;
@@ -553,10 +537,10 @@ static rpmRC runImmedTriggers(rpmpsm psm, rpmsenseFlags sense)
 	goto exit;
     }
 
-    triggersRun = (uint8_t *)xcalloc(rpmtdCount(&tindexes), sizeof(*triggersRun));
     {	Header sourceH = NULL;
 	const char *trigName;
 	rpm_count_t *triggerIndices = (rpm_count_t *)tindexes.data;
+	std::vector<uint8_t> triggersRun(rpmtdCount(&tindexes), 0);
 
 	while ((trigName = rpmtdNextString(&tnames))) {
 	    rpmdbMatchIterator mi;
@@ -571,7 +555,7 @@ static rpmRC runImmedTriggers(rpmpsm psm, rpmsenseFlags sense)
 				sense, sourceH, h,
 				psm->countCorrection,
 				rpmdbGetIteratorCount(mi),
-				triggersRun);
+				triggersRun.data());
 	    }
 
 	    rpmdbFreeIterator(mi);
@@ -579,7 +563,6 @@ static rpmRC runImmedTriggers(rpmpsm psm, rpmsenseFlags sense)
     }
     rpmtdFreeData(&tnames);
     rpmtdFreeData(&tindexes);
-    free(triggersRun);
 
 exit:
     headerFree(h);

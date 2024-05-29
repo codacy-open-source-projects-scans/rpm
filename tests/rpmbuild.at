@@ -26,6 +26,7 @@ RPMDB_INIT
 RPMTEST_CHECK([
 
 run rpmbuild \
+  --define "packager Iam" \
   -ba ${RPMDATA}/SPECS/hello.spec
 ],
 [0],
@@ -40,6 +41,38 @@ runroot rpm -qp --qf "%{license}\n" /build/RPMS/*/hello-1.0-1.*.rpm
 [0],
 [GPL, ASL 1.0
 GPL
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -qp --qf "%{packager}\n" /build/SRPMS/hello-1.0-1.src.rpm
+runroot rpm -qp --qf "%{packager}\n" /build/RPMS/*/hello-1.0-1.*.rpm
+],
+[0],
+[Iam
+Iam
+],
+[])
+RPMTEST_CLEANUP
+
+AT_SETUP([rpmbuild -bs spec])
+AT_KEYWORDS([build])
+RPMDB_INIT
+
+RPMTEST_CHECK([
+runroot rpmbuild -bs \
+	--define "packager Iam" \
+	${RPMDATA}/SPECS/hello.spec
+],
+[0],
+[ignore],
+[ignore])
+
+RPMTEST_CHECK([
+runroot rpm -q --qf "%{packager}\n" /build/SRPMS/hello-1.0-1.src.rpm
+],
+[0],
+[Iam
 ],
 [])
 RPMTEST_CLEANUP
@@ -321,6 +354,61 @@ run rpmbuild \
 [ignore])
 RPMTEST_CLEANUP
 
+AT_SETUP([rpmbuild --build-in-place])
+AT_KEYWORDS([build])
+RPMDB_INIT
+
+RPMTEST_CHECK([
+runroot_other tar xf /data/SOURCES/hello-2.0.tar.gz
+runroot_other mv hello-2.0/hello.spec .
+runroot_other find hello-2.0 | sort
+],
+[0],
+[hello-2.0
+hello-2.0/COPYING
+hello-2.0/FAQ
+hello-2.0/Makefile
+hello-2.0/README
+hello-2.0/hello.c
+],
+[])
+
+RPMTEST_CHECK([
+runroot --chdir hello-2.0 rpmbuild -bb --build-in-place ../hello.spec
+],
+[0],
+[ignore],
+[ignore])
+
+RPMTEST_CHECK([
+runroot rpm -qp --qf "%{name}-%{version}-%{release}\n" /build/RPMS/*/*.rpm
+],
+[0],
+[hello-2.0-1
+hello-debuginfo-2.0-1
+],
+[])
+
+# finally, see that we left the tree intact 
+RPMTEST_CHECK([
+runroot_other find hello-2.0 | sort
+],
+[0],
+[hello-2.0
+hello-2.0/COPYING
+hello-2.0/FAQ
+hello-2.0/Makefile
+hello-2.0/README
+hello-2.0/debugfiles.list
+hello-2.0/debuglinks.list
+hello-2.0/debugsources.list
+hello-2.0/elfbins.list
+hello-2.0/hello
+hello-2.0/hello.c
+],
+[])
+RPMTEST_CLEANUP
+
 AT_SETUP([rpmbuild with %autosetup -C])
 AT_KEYWORDS([build])
 RPMDB_INIT
@@ -416,11 +504,20 @@ RPMDB_INIT
 RPMTEST_CHECK([
 
 run rpmbuild \
+  --define "packager Iam" \
   --rebuild ${RPMDATA}/SRPMS/hello-1.0-1.src.rpm
 ],
 [0],
 [ignore],
 [ignore])
+
+RPMTEST_CHECK([
+runroot rpm -qp --qf "%{packager}\n" /build/RPMS/*/hello-1.0-1.*.rpm
+],
+[0],
+[Iam
+],
+[])
 RPMTEST_CLEANUP
 
 AT_SETUP([rpmbuild --short-circuit -bl])
@@ -457,12 +554,22 @@ AT_KEYWORDS([build])
 RPMDB_INIT
 RPMTEST_CHECK([
 
-runroot rpmbuild --quiet -ts /data/SOURCES/hello-2.0.tar.gz
+runroot rpmbuild --quiet \
+	--define "packager Iam" \
+	-ts /data/SOURCES/hello-2.0.tar.gz
 runroot rpm -qpl /build/SRPMS/hello-2.0-1.src.rpm
 ],
 [0],
 [hello-2.0.tar.gz
 hello.spec
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -q --qf "%{packager}\n" /build/SRPMS/hello-2.0-1.src.rpm
+],
+[0],
+[Iam
 ],
 [])
 RPMTEST_CLEANUP
@@ -2236,6 +2343,18 @@ runroot rpmbuild --quiet -bb \
 [0],
 [ignore],
 [ignore])
+
+RPMTEST_CHECK([
+# mock uses --target <hostarch> everywhere, even noarch packages
+target=$(runroot rpm --eval "%{_host_cpu}")
+runroot rpmbuild --quiet -bb \
+		--target ${target} \
+		--define "%_enable_debug_packages 1" \
+		/data/SPECS/hlinktest.spec
+],
+[0],
+[ignore],
+[ignore])
 RPMTEST_CLEANUP
 
 # ------------------------------
@@ -2259,6 +2378,8 @@ RPMTEST_CLEANUP
 
 # ------------------------------
 # Check dynamic build requires
+# Mimick what mock does: repeat build with --noprep --noclean
+# until -br succeeds, and finally build the package.
 AT_SETUP([rpmbuild -br])
 AT_KEYWORDS([build])
 RPMTEST_CHECK([
@@ -2275,22 +2396,22 @@ runroot rpmbuild \
 	foo-bar = 2.0 is needed by buildrequires-1.0-1.noarch
 ],
 )
-RPMTEST_CLEANUP
 
-# Test that -br creates an src.rpm on success
-AT_SETUP([rpmbuild -br success])
-AT_KEYWORDS([build])
 RPMTEST_CHECK([
-RPMDB_INIT
+runroot rpmbuild \
+    --define "provs bar foo foo-bar" \
+    --define "pkg foo" \
+    -bb --quiet /data/SPECS/deptest.spec
+
+runroot rpm -U /build/RPMS/noarch/deptest-foo-1.0-1.noarch.rpm
 
 runroot rpmbuild \
-  -br  /data/SPECS/mini.spec
+    -br --noprep --noclean\
+    --quiet /data/SPECS/buildrequires.spec
 ],
 [0],
-[Wrote: /build/SRPMS/mini-1-1.src.rpm
-],
 [],
-)
+[])
 RPMTEST_CLEANUP
 
 # Test that -br creates an src.rpm on success
