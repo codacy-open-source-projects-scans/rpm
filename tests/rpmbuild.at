@@ -3173,10 +3173,24 @@ runroot rpm -qp --qf "%{name}\n" /build/RPMS/*/*.rpm|sort
 ],
 [0],
 [caps
-caps-debuginfo
 ],
 [])
 
+RPMTEST_CHECK([
+runroot rpmbuild --quiet -bb --define "buildsubdir ." /data/SPECS/caps.spec
+],
+[0],
+[],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -qp --qf "%{name}\n" /build/RPMS/*/*.rpm|sort
+],
+[0],
+[caps
+caps-debuginfo
+],
+[])
 RPMTEST_CHECK([
 runroot rpm -q --filecaps /build/RPMS/*/caps-1.0-1.*.rpm | grep -v build-id
 ],
@@ -3274,6 +3288,43 @@ runroot_other cat /tmp/build.out
 [BUILD_PRE noarch noarch noarch
 BUILD noarch noarch noarch
 BUILD_POST noarch noarch noarch
+],
+[])
+RPMTEST_CLEANUP
+
+AT_SETUP([rpmbuild install_pre override])
+AT_KEYWORDS([build])
+RPMDB_INIT
+RPMTEST_CHECK([
+runroot rpmbuild -bb /data/SPECS/install-hack.spec
+],
+[0],
+[ignore],
+[ignore])
+RPMTEST_CLEANUP
+
+# Mimick what cpack does. It's not how rpmbuild wants to be used, so
+# please don't copy this to any new usages.
+AT_SETUP([rpmbuild --buildroot])
+AT_KEYWORDS([build])
+
+RPMDB_INIT
+RPMTEST_CHECK([
+runroot_other mkdir -p /tmp/buildroot/out
+runroot_other touch /tmp/buildroot/out/sider
+runroot rpmbuild -bb --quiet \
+	--buildroot /tmp/buildroot \
+	/data/SPECS/brtest.spec
+],
+[0],
+[],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -qpl /build/RPMS/noarch/brtest-1.0-1.noarch.rpm
+],
+[0],
+[/out/sider
 ],
 [])
 RPMTEST_CLEANUP
