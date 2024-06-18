@@ -1286,16 +1286,16 @@ int parsePreamble(rpmSpec spec, int initialPackage, enum parseStages stage)
 	}
 
 	if (!spec->buildDir) {
-	    /* Grab top builddir on first entry as we'll override _builddir */
-	    if (!rpmMacroIsDefined(spec->macros, "_top_builddir")) {
-		char *top_builddir = rpmExpand("%{_builddir}", NULL);
-		rpmPushMacroFlags(spec->macros, "_top_builddir", NULL,
-				top_builddir, RMIL_GLOBAL, RPMMACRO_LITERAL);
-		free(top_builddir);
-	    }
-
 	    /* Using release here causes a buildid no-recompute test to fail */
-	    spec->buildDir = rpmExpand("%{_top_builddir}/%{NAME}-%{VERSION}-build", NULL);
+	    char *bn = rpmExpand("%{NAME}-%{VERSION}-build", NULL);
+	    /* Tilde and caret in paths are evil, convert to underscores */
+	    for (char *t = bn; *t; t++) {
+		if (*t == '^' || *t == '~')
+		    *t = '_';
+	    }
+	    spec->buildDir = rpmExpand("%{_top_builddir}/", bn, NULL);
+	    free(bn);
+
 	    /* Override toplevel _builddir for backwards compatibility */
 	    rpmPushMacroFlags(spec->macros, "_builddir", NULL, spec->buildDir,
 				RMIL_SPEC, RPMMACRO_LITERAL);

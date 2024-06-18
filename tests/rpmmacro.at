@@ -50,6 +50,16 @@ runroot rpm --define "this that" --eval '%{this}' --eval '%not_defined' --eval '
 %{not_defined}
 %{}
 ])
+
+# This behavior is relied on by countless specs and various rpm internals
+# too, and most likely can never be changed.
+RPMTEST_CHECK([
+runroot rpm --eval '%{not_defined}'
+],
+[0],
+[%{not_defined}
+],
+[])
 RPMTEST_CLEANUP
 
 # ------------------------------
@@ -1439,4 +1449,21 @@ runroot_other rpmlua -e 'pid = posix.fork(); if pid == 0 then a,b,c=rpm.redirect
 warning: posix.wait(): .fork(), .exec(), .wait() and .redirect2null() are deprecated, use rpm.execute() instead
 warning: runaway fork() in Lua script]
 )
+RPMTEST_CLEANUP
+
+AT_SETUP([rpmlua hooks])
+AT_KEYWORDS([lua])
+
+RPMTEST_CHECK([
+run rpm --load /data/macros.hooks \
+	--eval "%hook_this"
+],
+[0],
+[1: string(whee)
+2: number(3)
+3: userdata(userdata: (nil))
+4: number(1.2)
+
+],
+[])
 RPMTEST_CLEANUP

@@ -677,13 +677,14 @@ static const rpmTagVal sourceTags[] = {
     0
 };
 
-static void initSourceHeader(rpmSpec spec)
+static int initSourceHeader(rpmSpec spec)
 {
     Package sourcePkg = spec->sourcePackage;
     struct Source *srcPtr;
+    int rc = 0;
 
     if (headerIsEntry(sourcePkg->header, RPMTAG_NAME))
-	return;
+	return rc;
 
     char *os = rpmExpand("%{_target_os}", NULL);
     headerPutString(sourcePkg->header, RPMTAG_OS, os);
@@ -739,6 +740,10 @@ static void initSourceHeader(rpmSpec spec)
 		spec->noSource ? "no" : "");
 	free(nvr);
     }
+
+    rc = checkForRequired(spec->sourcePackage->header);
+
+    return rc;
 }
 
 static void finalizeSourceHeader(rpmSpec spec)
@@ -1298,6 +1303,19 @@ static rpmSpec parseSpec(const char *specFile, rpmSpecFlags flags,
     /* If explicit --buildroot was passed, grab hold of it */
     if (buildRoot)
 	spec->buildRoot = xstrdup(buildRoot);
+
+    /* Grab top builddir on first entry as we'll override _builddir */
+    if (!rpmMacroIsDefined(spec->macros, "_top_builddir")) {
+	char *top_builddir = rpmExpand("%{_builddir}", NULL);
+	rpmPushMacroFlags(spec->macros, "_top_builddir", NULL,
+			top_builddir, RMIL_GLOBAL, RPMMACRO_LITERAL);
+
+	/* Undefine (!!) %_builddir so %global misuses fall through */
+	while (rpmMacroIsDefined(spec->macros, "_builddir"))
+	    rpmPopMacro(spec->macros, "_builddir");
+	free(top_builddir);
+    }
+
     rpmPushMacro(NULL, "_docdir", NULL, "%{_defaultdocdir}", RMIL_SPEC);
     rpmPushMacro(NULL, "_licensedir", NULL, "%{_defaultlicensedir}", RMIL_SPEC);
     spec->recursing = recursing;
@@ -1307,7 +1325,8 @@ static rpmSpec parseSpec(const char *specFile, rpmSpecFlags flags,
 	goto errxit;
 
     /* Assemble source header from parsed components */
-    initSourceHeader(spec);
+    if (initSourceHeader(spec))
+	goto errxit;
     return spec;
 
 errxit:

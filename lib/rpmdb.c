@@ -542,6 +542,7 @@ static rpmRC rpmdbFindByFile(rpmdb db, dbiIndex dbi, const char *filespec,
     fingerPrintCache fpc = NULL;
     fingerPrint * fp1 = NULL;
     dbiIndexSet allMatches = NULL;
+    unsigned int nmatches = 0;
     unsigned int i;
     rpmRC rc = RPMRC_FAIL; /* assume error */
 
@@ -563,12 +564,13 @@ static rpmRC rpmdbFindByFile(rpmdb db, dbiIndex dbi, const char *filespec,
 
     if (rc || allMatches == NULL) goto exit;
 
+    nmatches = dbiIndexSetCount(allMatches);
     *matches = dbiIndexSetNew(0);
-    fpc = fpCacheCreate(allMatches->count, NULL);
+    fpc = fpCacheCreate(nmatches, NULL);
     fpLookup(fpc, dirName, baseName, &fp1);
 
     i = 0;
-    while (i < allMatches->count) {
+    while (i < nmatches) {
 	struct rpmtd_s bn, dn, di, fs;
 	const char ** baseNames, ** dirNames;
 	const uint32_t * dirIndexes;
@@ -611,9 +613,9 @@ static rpmRC rpmdbFindByFile(rpmdb db, dbiIndex dbi, const char *filespec,
 
 	    prevoff = offset;
 	    i++;
-	    if (i < allMatches->count)
+	    if (i < nmatches)
 		offset = dbiIndexRecordOffset(allMatches, i);
-	} while (i < allMatches->count && offset == prevoff);
+	} while (i < nmatches && offset == prevoff);
 
 	rpmtdFreeData(&bn);
 	rpmtdFreeData(&dn);
@@ -626,7 +628,7 @@ static rpmRC rpmdbFindByFile(rpmdb db, dbiIndex dbi, const char *filespec,
     free(fp1);
     fpCacheFree(fpc);
 
-    if ((*matches)->count == 0) {
+    if (dbiIndexSetCount(*matches) == 0) {
 	*matches = dbiIndexSetFree(*matches);
 	rc = RPMRC_NOTFOUND;
     } else {
@@ -680,7 +682,7 @@ static rpmRC dbiFindMatches(rpmdb db, dbiIndex dbi,
 		const char * arch,
 		dbiIndexSet * matches)
 {
-    unsigned int gotMatches = 0;
+    dbiIndexSet prune = NULL;
     rpmRC rc;
     unsigned int i;
 
@@ -734,21 +736,25 @@ static rpmRC dbiFindMatches(rpmdb db, dbiIndex dbi,
 		h = NULL;
 	    rpmtdFreeData(&td);
 	}
-	if (h)
-	    (*matches)->recs[gotMatches++] = (*matches)->recs[i];
-	else
-	    (*matches)->recs[i].hdrNum = 0;
+	if (h == NULL) {
+	    if (prune == NULL)
+		prune = dbiIndexSetNew(1);
+	    unsigned int tagnum = dbiIndexRecordFileNumber(*matches, i);
+	    dbiIndexSetAppendOne(prune, recoff, tagnum, 0);
+	}
 	rpmdbFreeIterator(mi);
     }
 
-    if (gotMatches) {
-	(*matches)->count = gotMatches;
+    if (*matches && prune)
+	dbiIndexSetPruneSet(*matches, prune, 0);
+
+    if (dbiIndexSetCount(*matches)) {
 	rc = RPMRC_OK;
     } else
 	rc = RPMRC_NOTFOUND;
 
 exit:
-/* FIX: double indirection */
+    dbiIndexSetFree(prune);
     if (rc && matches && *matches)
 	*matches = dbiIndexSetFree(*matches);
     return rc;
@@ -975,7 +981,7 @@ unsigned int rpmdbGetIteratorFileNum(rpmdbMatchIterator mi)
 
 int rpmdbGetIteratorCount(rpmdbMatchIterator mi)
 {
-    return (mi && mi->mi_set ?  mi->mi_set->count : 0);
+    return (mi ? dbiIndexSetCount(mi->mi_set) : 0);
 }
 
 int rpmdbGetIteratorIndex(rpmdbMatchIterator mi)
@@ -991,8 +997,8 @@ void rpmdbSetIteratorIndex(rpmdbMatchIterator mi, unsigned int ix)
 
 unsigned int rpmdbGetIteratorOffsetFor(rpmdbMatchIterator mi, unsigned int ix)
 {
-    if (mi && mi->mi_set && ix < mi->mi_set->count)
-	return mi->mi_set->recs[ix].hdrNum;
+    if (mi && mi->mi_set && ix < dbiIndexSetCount(mi->mi_set))
+	return dbiIndexRecordOffset(mi->mi_set, ix);
     return 0;
 }
 
@@ -1391,7 +1397,7 @@ top:
 
     do {
 	if (mi->mi_set) {
-	    if (!(mi->mi_setx < mi->mi_set->count))
+	    if (!(mi->mi_setx < dbiIndexSetCount(mi->mi_set)))
 		return NULL;
 	    mi->mi_offset = dbiIndexRecordOffset(mi->mi_set, mi->mi_setx);
 	    mi->mi_filenum = dbiIndexRecordFileNumber(mi->mi_set, mi->mi_setx);
@@ -1509,29 +1515,27 @@ int rpmdbFilterIterator(rpmdbMatchIterator mi, packageHash const & hdrNums, int 
 
     if (hdrNums.empty()) {
 	if (!neg)
-	    mi->mi_set->count = 0;
+	    dbiIndexSetClear(mi->mi_set);
 	return 0;
     }
 
-    unsigned int from;
-    unsigned int to = 0;
-    unsigned int num = mi->mi_set->count;
-    int cond;
+    unsigned int num = dbiIndexSetCount(mi->mi_set);
+    dbiIndexSet newset = dbiIndexSetNew(num / 2);
 
-    assert(mi->mi_set->count > 0);
-
-    for (from = 0; from < num; from++) {
-	auto it = hdrNums.find(mi->mi_set->recs[from].hdrNum);
-	cond = (it == hdrNums.end());
+    for (unsigned int from = 0; from < num; from++) {
+	unsigned int recoff = dbiIndexRecordOffset(mi->mi_set, from);
+	auto it = hdrNums.find(recoff);
+	int cond = (it == hdrNums.end());
 	cond = neg ? !cond : cond;
-	if (cond) {
-	    mi->mi_set->count--;
+	if (cond)
 	    continue;
-	}
-	if (from != to)
-	    mi->mi_set->recs[to] = mi->mi_set->recs[from]; /* structure assignment */
-	to++;
+
+	unsigned int tagnum = dbiIndexRecordFileNumber(mi->mi_set, from);
+	dbiIndexSetAppendOne(newset, recoff, tagnum, 0);
     }
+    dbiIndexSetSort(newset);
+    dbiIndexSetFree(mi->mi_set);
+    mi->mi_set = newset;
     return 0;
 }
 
@@ -1879,9 +1883,10 @@ const unsigned int *rpmdbIndexIteratorPkgOffsets(rpmdbIndexIterator ii)
     if (!ii || !ii->ii_set)
 	return NULL;
 
-    ii->ii_hdrNums.resize(ii->ii_set->count);
-    for (int i = 0; i < ii->ii_set->count; i++) {
-	ii->ii_hdrNums[i] = ii->ii_set->recs[i].hdrNum;
+    unsigned int count = dbiIndexSetCount(ii->ii_set);
+    ii->ii_hdrNums.resize(count);
+    for (int i = 0; i < count; i++) {
+	ii->ii_hdrNums[i] = dbiIndexRecordOffset(ii->ii_set, i);
     }
 
     return ii->ii_hdrNums.data();
