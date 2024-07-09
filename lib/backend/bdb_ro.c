@@ -16,6 +16,19 @@
 #define BDB_HASH 0
 #define BDB_BTREE 1
 
+union _dbswap {
+    unsigned int ui;
+    unsigned char uc[4];
+};
+
+#define	_DBSWAP(_a) \
+\
+  { unsigned char _b, *_c = (_a).uc; \
+    _b = _c[3]; _c[3] = _c[0]; _c[0] = _b; \
+    _b = _c[2]; _c[2] = _c[1]; _c[1] = _b; \
+\
+  }
+
 struct dbiCursor_s;
 
 struct bdb_kv {
@@ -150,7 +163,7 @@ static void bdb_close(struct bdb_db *db)
 {
     if (db->fd >= 0)
 	close(db->fd);
-    free(db);
+    delete db;
 }
 
 static struct bdb_db *bdb_open(const char *name)
@@ -163,7 +176,7 @@ static struct bdb_db *bdb_open(const char *name)
     if (fd == -1) {
 	return NULL;
     }
-    db = (struct bdb_db *)xcalloc(1, sizeof(*db));
+    db = new bdb_db {};
     db->fd = fd;
     if (pread(fd, meta, 512, 0) != 512) {
 	rpmlog(RPMLOG_ERR, "%s: pread: %s\n", name, strerror(errno));
@@ -485,7 +498,7 @@ static int btree_getval(struct bdb_cur *cur)
 
 static struct bdb_cur *cur_open(struct bdb_db *db)
 {
-    struct bdb_cur *cur = (struct bdb_cur *)xcalloc(1, sizeof(*cur));
+    struct bdb_cur *cur = new bdb_cur {};
     cur->db = db;
     cur->page = (unsigned char *)xmalloc(db->pagesize);
     return cur;
@@ -501,7 +514,7 @@ static void cur_close(struct bdb_cur *cur)
 	free(cur->keyov.kv);
     if (cur->valov.kv)
 	free(cur->valov.kv);
-    free(cur);
+    delete cur;
 }
 
 static int cur_next(struct bdb_cur *cur)

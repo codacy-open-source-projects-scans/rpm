@@ -1,6 +1,8 @@
 #ifndef _RPMTS_INTERNAL_H
 #define _RPMTS_INTERNAL_H
 
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <rpm/rpmts.h>
@@ -13,7 +15,21 @@
 #include "rpmscript.h"
 #include "rpmtriggers.h"
 
-typedef struct diskspaceInfo_s * rpmDiskSpaceInfo;
+struct diskspaceInfo {
+    std::string mntPoint;/*!< File system mount point */
+    dev_t dev;		/*!< File system device number. */
+    int64_t bneeded;	/*!< No. of blocks needed. */
+    int64_t ineeded;	/*!< No. of inodes needed. */
+    int64_t bsize;	/*!< File system block size. */
+    int64_t bavail;	/*!< No. of blocks available. */
+    int64_t iavail;	/*!< No. of inodes available. */
+    int64_t obneeded;	/*!< Bookkeeping to avoid duplicate reports */
+    int64_t oineeded;	/*!< Bookkeeping to avoid duplicate reports */
+    int64_t bdelta;	/*!< Delta for temporary space need on updates */
+    int64_t idelta;	/*!< Delta for temporary inode need on updates */
+
+    int rotational;	/*!< Rotational media? */
+};
 
 /* Transaction set elements information */
 typedef struct tsMembers_s {
@@ -46,7 +62,8 @@ struct rpmts_s {
     rpmprobFilterFlags ignoreSet;
 				/*!< Bits to filter current problems. */
 
-    rpmDiskSpaceInfo dsi;	/*!< Per filesystem disk/inode usage. */
+    std::unordered_map<dev_t,diskspaceInfo> dsi;
+				/*!< Per filesystem disk/inode usage. */
 
     rpmdb rdb;			/*!< Install database handle. */
     int dbmode;			/*!< Install database open mode. */

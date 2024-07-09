@@ -319,7 +319,7 @@ static int doCheckBuildRequires(rpmts ts, rpmSpec spec, int test)
     return rc;
 }
 
-static rpmRC doBuildDir(rpmSpec spec, int test, StringBuf *sbp)
+static rpmRC doBuildDir(rpmSpec spec, int test, int inPlace, StringBuf *sbp)
 {
     char *doDir = rpmExpand("test -d '", spec->buildDir, "' && ",
 			   "%{_fixperms} '", spec->buildDir, "'\n",
@@ -327,6 +327,13 @@ static rpmRC doBuildDir(rpmSpec spec, int test, StringBuf *sbp)
 			   "%{__mkdir_p} '", spec->buildDir, "'\n",
 			   "%{__mkdir_p} '%{specpartsdir}'\n",
 			   NULL);
+
+    if (inPlace) {
+	/* note that pwd needs to be from parse, not build time */
+	char *buf = rpmExpand("%{__ln} -s %(pwd) %{builddir}/%{buildsubdir}", NULL);
+	doDir = rstrcat(&doDir, buf);
+	free(buf);
+    }
 
     rpmRC rc = doScript(spec, RPMBUILD_MKBUILDDIR, "%mkbuilddir",
 			doDir, test, sbp);
@@ -409,6 +416,7 @@ static int buildSpec(rpmts ts, BTA_t buildArgs, rpmSpec spec, int what)
 	int didBuild = (what & (RPMBUILD_PREP|RPMBUILD_CONF|RPMBUILD_BUILD|RPMBUILD_INSTALL));
 	int sourceOnly = ((what & RPMBUILD_PACKAGESOURCE) &&
 	   !(what & (RPMBUILD_CONF|RPMBUILD_BUILD|RPMBUILD_INSTALL|RPMBUILD_PACKAGEBINARY)));
+	int inPlace = (rpmExpandNumeric("%{?_build_in_place}") > 0);
 
 	if (!rpmSpecGetSection(spec, RPMBUILD_BUILDREQUIRES) && sourceOnly) {
 		/* don't run prep if not needed for source build */
@@ -416,11 +424,18 @@ static int buildSpec(rpmts ts, BTA_t buildArgs, rpmSpec spec, int what)
 	    what &= ~(RPMBUILD_PREP|RPMBUILD_MKBUILDDIR);
 	}
 
+	if (inPlace) {
+	    /* in-place builds counter-intuitively always have buildsubdir */
+	    rpmPushMacro(spec->macros,
+			"buildsubdir", NULL, "%{NAME}-%{VERSION}", RMIL_SPEC);
+	    what &= ~(RPMBUILD_RMBUILD);
+	}
+
 	if ((what & RPMBUILD_CHECKBUILDREQUIRES) &&
 	    (rc = doCheckBuildRequires(ts, spec, test)))
 		goto exit;
 
-	if ((what & RPMBUILD_MKBUILDDIR) && (rc = doBuildDir(spec, test, sbp)))
+	if ((what & RPMBUILD_MKBUILDDIR) && (rc = doBuildDir(spec, test, inPlace, sbp)))
 		goto exit;
 
 	if ((what & RPMBUILD_PREP) &&

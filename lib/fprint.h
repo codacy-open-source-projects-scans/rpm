@@ -6,16 +6,14 @@
  * Identify a file name path by a unique "finger print".
  */
 
+#include <vector>
 #include <rpm/rpmtypes.h>
 
 /**
  */
 typedef struct fprintCache_s * fingerPrintCache;
 
-/**
- * @todo Convert to pointer and make abstract.
- */
-typedef struct fingerPrint_s fingerPrint;
+struct fingerPrint;
 
 struct rpmffi_s {
   rpmte p;
@@ -41,8 +39,8 @@ fingerPrintCache fpCacheFree(fingerPrintCache cache);
 
 RPM_GNUC_INTERNAL
 fingerPrint * fpCacheGetByFp(fingerPrintCache cache,
-			     struct fingerPrint_s * fp, int ix,
-			     struct rpmffi_s ** recs, int * numRecs);
+			     struct fingerPrint * fp, int ix,
+			     std::vector<struct rpmffi_s> & recs);
 
 RPM_GNUC_INTERNAL
 void fpCachePopulate(fingerPrintCache cache, rpmts ts, int fileCount);
@@ -87,16 +85,6 @@ RPM_GNUC_INTERNAL
 int fpLookupId(fingerPrintCache cache,
 	       rpmsid dirNameId, rpmsid BaseNameId,
 	       fingerPrint **fp);
-
-/**
- * Compare two finger print entries.
- * This routine is exactly equivalent to the FP_EQUAL macro.
- * @param key1		finger print 1
- * @param key2		finger print 2
- * @return result of comparing key1 and key2
- */
-RPM_GNUC_INTERNAL
-int fpEqual(const fingerPrint * key1, const fingerPrint * key2);
 
 /**
  * Return finger prints of an array of file paths.

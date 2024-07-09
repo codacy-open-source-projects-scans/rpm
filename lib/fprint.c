@@ -4,6 +4,8 @@
 
 #include "system.h"
 
+#include <unordered_map>
+
 #include <rpm/rpmfileutil.h>	/* for rpmCleanPath */
 #include <rpm/rpmstring.h>
 #include <rpm/rpmts.h>
@@ -17,35 +19,12 @@
 #include "debug.h"
 #include <libgen.h>
 
-/* Create new hash table type rpmFpEntryHash */
-#define HASHTYPE rpmFpEntryHash
-#define HTKEYTYPE rpmsid
-#define HTDATATYPE const struct fprintCacheEntry_s *
-#include "rpmhash.H"
-#include "rpmhash.C"
-#undef HASHTYPE
-#undef HTKEYTYPE
-#undef HTDATATYPE
-
-/* Create by-fingerprint hash table */
-#define HASHTYPE rpmFpHash
-#define HTKEYTYPE const fingerPrint *
-#define HTDATATYPE struct rpmffi_s
-#include "rpmhash.H"
-#include "rpmhash.C"
-#undef HASHTYPE
-#undef HTKEYTYPE
-#undef HTDATATYPE
 
 static unsigned int sidHash(rpmsid sid)
 {
     return sid;
 }
 
-static int sidCmp(rpmsid a, rpmsid b)
-{
-    return (a != b);
-}
 
 /**
  * Finger print cache entry.
@@ -63,7 +42,7 @@ struct fprintCacheEntry_s {
  * Associates a trailing sub-directory and final base name with an existing
  * directory finger print.
  */
-struct fingerPrint_s {
+struct fingerPrint {
     /*! directory finger print entry (the directory path is stat(2)-able */
     const struct fprintCacheEntry_s * entry;
     /*! trailing sub-directory path (directories that are not stat(2)-able */
@@ -79,6 +58,42 @@ struct fingerPrint_s {
 	    ((a).subDirId == (b).subDirId) \
     )
 
+/* Hash value for a finger print pointer, based on dev and inode only! */
+struct fpHash
+{
+    size_t operator() (const fingerPrint *fp) const
+    {
+	unsigned int hash = 0;
+	int j;
+
+	hash = sidHash(fp->baseNameId);
+	if (fp->subDirId) hash ^= sidHash(fp->subDirId);
+
+	hash ^= ((unsigned)fp->entry->dev);
+	for (j=0; j<4; j++) hash ^= ((fp->entry->ino >> (8*j)) & 0xFF) << ((3-j)*8);
+
+	return hash;
+    }
+};
+
+struct fpEqual
+{
+    bool operator()(const fingerPrint * k1, const fingerPrint * k2) const
+    {
+	/* If the addresses are the same, so are the values. */
+	if (k1 == k2)
+	    return true;
+
+	/* Otherwise, compare fingerprints by value. */
+	if (FP_EQUAL(*k1, *k2))
+	    return true;
+	return false;
+    }
+};
+
+using rpmFpEntryHash = std::unordered_multimap<rpmsid,fprintCacheEntry_s>;
+using rpmFpHash = std::unordered_map<fingerPrint *,rpmffi_s,fpHash,fpEqual>;
+
 /**
  * Finger print cache.
  */
@@ -91,8 +106,6 @@ struct fprintCache_s {
 fingerPrintCache fpCacheCreate(int sizeHint, rpmstrPool pool)
 {
     fingerPrintCache fpc = new fprintCache_s {};
-    fpc->ht = rpmFpEntryHashCreate(sizeHint, sidHash, sidCmp,
-				   NULL, (rpmFpEntryHashFreeData)free);
     fpc->pool = (pool != NULL) ? rpmstrPoolLink(pool) : rpmstrPoolCreate();
     return fpc;
 }
@@ -100,8 +113,6 @@ fingerPrintCache fpCacheCreate(int sizeHint, rpmstrPool pool)
 fingerPrintCache fpCacheFree(fingerPrintCache cache)
 {
     if (cache) {
-	cache->ht = rpmFpEntryHashFree(cache->ht);
-	cache->fp = rpmFpHashFree(cache->fp);
 	cache->pool = rpmstrPoolFree(cache->pool);
 	delete cache;
     }
@@ -117,10 +128,9 @@ fingerPrintCache fpCacheFree(fingerPrintCache cache)
 static const struct fprintCacheEntry_s * cacheContainsDirectory(
 			    fingerPrintCache cache, rpmsid dirId)
 {
-    const struct fprintCacheEntry_s ** data;
-
-    if (rpmFpEntryHashGetEntry(cache->ht, dirId, &data, NULL, NULL))
-	return data[0];
+    auto entry = cache->ht.find(dirId);
+    if (entry != cache->ht.end())
+	return &entry->second;
     return NULL;
 }
 
@@ -177,15 +187,13 @@ static int doLookupId(fingerPrintCache cache,
 	if (cacheHit != NULL) {
 	    fp->entry = cacheHit;
 	} else if (!stat(rpmstrPoolStr(cache->pool, fpId), &sb)) {
-	    struct fprintCacheEntry_s * newEntry =
-		(struct fprintCacheEntry_s *)xmalloc(sizeof(* newEntry));
-
-	    newEntry->ino = sb.st_ino;
-	    newEntry->dev = sb.st_dev;
-	    newEntry->dirId = fpId;
-	    fp->entry = newEntry;
-
-	    rpmFpEntryHashAddEntry(cache->ht, fpId, fp->entry);
+	    struct fprintCacheEntry_s newEntry = {
+		.dirId = fpId,
+		.dev = sb.st_dev,
+		.ino = sb.st_ino,
+	    };
+	    auto ret = cache->ht.insert({fpId, newEntry});
+	    fp->entry = &ret->second;
 	}
 
         if (fp->entry) {
@@ -243,39 +251,6 @@ int fpLookupId(fingerPrintCache cache,
     return doLookupId(cache, dirNameId, baseNameId, *fp);
 }
 
-/**
- * Return hash value for a finger print.
- * Hash based on dev and inode only!
- * @param fp		pointer to finger print entry
- * @return hash value
- */
-static unsigned int fpHashFunction(const fingerPrint * fp)
-{
-    unsigned int hash = 0;
-    int j;
-
-    hash = sidHash(fp->baseNameId);
-    if (fp->subDirId) hash ^= sidHash(fp->subDirId);
-
-    hash ^= ((unsigned)fp->entry->dev);
-    for (j=0; j<4; j++) hash ^= ((fp->entry->ino >> (8*j)) & 0xFF) << ((3-j)*8);
-    
-    return hash;
-}
-
-int fpEqual(const fingerPrint * k1, const fingerPrint * k2)
-{
-    /* If the addresses are the same, so are the values. */
-    if (k1 == k2)
-	return 0;
-
-    /* Otherwise, compare fingerprints by value. */
-    if (FP_EQUAL(*k1, *k2))
-	return 0;
-    return 1;
-
-}
-
 const char * fpEntryDir(fingerPrintCache cache, fingerPrint *fp)
 {
     const char * dn = NULL;
@@ -292,7 +267,7 @@ dev_t fpEntryDev(fingerPrintCache cache, fingerPrint *fp)
 int fpLookupEquals(fingerPrintCache cache, fingerPrint *fp,
 	          const char * dirName, const char * baseName)
 {
-    struct fingerPrint_s ofp;
+    struct fingerPrint ofp;
     doLookup(cache, dirName, baseName, &ofp);
     return FP_EQUAL(*fp, ofp);
 }
@@ -300,7 +275,7 @@ int fpLookupEquals(fingerPrintCache cache, fingerPrint *fp,
 int fpLookupEqualsId(fingerPrintCache cache, fingerPrint *fp,
 	          rpmsid dirNameId, rpmsid baseNameId)
 {
-    struct fingerPrint_s ofp;
+    struct fingerPrint ofp;
     doLookupId(cache, dirNameId, baseNameId, &ofp);
     return FP_EQUAL(*fp, ofp);
 }
@@ -338,13 +313,9 @@ fingerPrint * fpLookupList(fingerPrintCache cache, rpmstrPool pool,
 /* Check file for to be installed symlinks in their path and correct their fp */
 static void fpLookupSubdir(rpmFpHash symlinks, fingerPrintCache fpc, fingerPrint *fp)
 {
-    struct fingerPrint_s current_fp;
+    struct fingerPrint current_fp;
     const char *currentsubdir;
     size_t lensubDir, bnStart, bnEnd;
-
-    struct rpmffi_s * recs;
-    int numRecs;
-    int i;
     int symlinkcount = 0;
 
     for (;;) {
@@ -369,11 +340,11 @@ static void fpLookupSubdir(rpmFpHash symlinks, fingerPrintCache fpc, fingerPrint
 						    currentsubdir + bnStart,
 						    bnEnd - bnStart, 1);
 
-	    rpmFpHashGetEntry(symlinks, &current_fp, &recs, &numRecs, NULL);
-
-	    for (i = 0; i < numRecs; i++) {
-		rpmfiles foundfi = rpmteFiles(recs[i].p);
-		char const *linktarget = rpmfilesFLink(foundfi, recs[i].fileno);
+	    auto range = symlinks.equal_range(&current_fp);
+	    for (auto it = range.first; it != range.second; ++it) {
+		const rpmffi_s & rec = it->second;
+		rpmfiles foundfi = rpmteFiles(rec.p);
+		char const *linktarget = rpmfilesFLink(foundfi, rec.fileno);
 		char *link;
 		rpmsid linkId;
 
@@ -429,12 +400,15 @@ static void fpLookupSubdir(rpmFpHash symlinks, fingerPrintCache fpc, fingerPrint
 }
 
 fingerPrint * fpCacheGetByFp(fingerPrintCache cache,
-			     struct fingerPrint_s * fp, int ix,
-			     struct rpmffi_s ** recs, int * numRecs)
+			     struct fingerPrint * fp, int ix,
+			     std::vector<struct rpmffi_s> & recs)
 {
-    if (rpmFpHashGetEntry(cache->fp, fp + ix, recs, numRecs, NULL))
+    auto range = cache->fp.equal_range(fp + ix);
+    if (range.first != range.second) {
+	for (auto it = range.first; it != range.second; ++it)
+	    recs.push_back(it->second);
 	return fp + ix;
-    else
+    } else
 	return NULL;
 }
 
@@ -447,11 +421,7 @@ void fpCachePopulate(fingerPrintCache fpc, rpmts ts, int fileCount)
     int i, fc;
     int havesymlinks = 0;
 
-    if (fpc->fp == NULL)
-	fpc->fp = rpmFpHashCreate(fileCount/2 + 10001, fpHashFunction, fpEqual,
-				  NULL, NULL);
-
-    rpmFpHash symlinks = rpmFpHashCreate(fileCount/16+16, fpHashFunction, fpEqual, NULL, NULL);
+    rpmFpHash symlinks;
 
     /* populate the fingerprints of all packages in the transaction */
     /* also create a hash of all symlinks in the new packages */
@@ -478,7 +448,7 @@ void fpCachePopulate(fingerPrintCache fpc, rpmts ts, int fileCount)
 		    continue;
 		ffi.p = p;
 		ffi.fileno = i;
-		rpmFpHashAddEntry(symlinks, fpList + i, ffi);
+		symlinks.insert({fpList + i, ffi});
 		havesymlinks = 1;
 	    }
 	}
@@ -516,14 +486,12 @@ void fpCachePopulate(fingerPrintCache fpc, rpmts ts, int fileCount)
 	    }
 	    ffi.p = p;
 	    ffi.fileno = i;
-	    rpmFpHashAddEntry(fpc->fp, fpList + i, ffi);
+	    fpc->fp.insert({fpList + i, ffi});
 	    lastfp = fpList + i;
 	}
 	(void) rpmswExit(rpmtsOp(ts, RPMTS_OP_FINGERPRINT), 0);
 	rpmfilesFree(fi);
     }
     rpmtsiFree(pi);
-
-    rpmFpHashFree(symlinks);
 }
 
