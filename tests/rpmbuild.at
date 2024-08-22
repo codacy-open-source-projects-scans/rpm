@@ -176,18 +176,6 @@ runroot rpmbuild -bb \
 
 RPMTEST_CHECK([
 runroot rpmbuild -bb \
-	--define 'buildsystem_autotools_conf %nil' \
-	--define 'buildsystem_autotools_build %nil' \
-	--define 'buildsystem_autotools_install %nil' \
-	--quiet /data/SPECS/amhello.spec
-],
-[1],
-[],
-[error: line 11: Required parametric macro %buildsystem_autotools_conf not defined for buildsystem autotools
-])
-
-RPMTEST_CHECK([
-runroot rpmbuild -bb \
 	--define 'buildsystem_autotools_build %nil' \
 	--define 'buildsystem_autotools_check %nil' \
 	--quiet /data/SPECS/amhello.spec
@@ -390,6 +378,26 @@ run rpmbuild \
 [ignore])
 RPMTEST_CLEANUP
 
+AT_SETUP([rpmbuild -bp autosetup without patches])
+AT_KEYWORDS([build])
+RPMDB_INIT
+RPMTEST_CHECK([
+
+run rpmbuild -D="nopatches 1" \
+  -bp ${RPMDATA}/SPECS/hello-auto.spec
+],
+[0],
+[ignore],
+[stderr])
+
+RPMTEST_CHECK([
+grep warning: stderr
+],
+[1],
+[],
+[])
+RPMTEST_CLEANUP
+
 AT_SETUP([rpmbuild --build-in-place 1])
 AT_KEYWORDS([build])
 RPMDB_INIT
@@ -453,6 +461,27 @@ hello-2.0/hello.c
 [])
 RPMTEST_CLEANUP
 
+AT_SETUP([rpmbuild --build-in-place --noprep])
+AT_KEYWORDS([build])
+RPMDB_INIT
+
+RPMTEST_CHECK([
+runroot_other tar xf /data/SOURCES/hello-2.0.tar.gz
+runroot_other mv hello-2.0/hello.spec .
+],
+[0],
+[],
+[])
+
+RPMTEST_CHECK([
+runroot --chdir hello-2.0 rpmbuild -bb --quiet \
+	--noprep --build-in-place ../hello.spec
+],
+[0],
+[],
+[ignore])
+RPMTEST_CLEANUP
+
 AT_SETUP([rpmbuild --build-in-place --short-circuit])
 AT_KEYWORDS([build])
 RPMDB_INIT
@@ -504,13 +533,19 @@ RPMDB_INIT
 RPMTEST_CHECK([
 
 run rpmbuild \
-  -ba ${RPMDATA}/SPECS/hello-autopatch.spec 2> >(grep warning >&2) | grep warning
+  -ba --quiet ${RPMDATA}/SPECS/hello-autopatch.spec
 ],
 [0],
-[RPM build warnings:
+[],
+[stderr])
+
+RPMTEST_CHECK([
+grep warning: stderr
 ],
-[warning: autopatch: no matching patches in range
-])
+[0],
+[warning: /data/SPECS/hello-autopatch.spec line 22: autopatch: no matching patches in range
+],
+[])
 RPMTEST_CLEANUP
 
 AT_SETUP([rpmbuild -ba find-lang])
