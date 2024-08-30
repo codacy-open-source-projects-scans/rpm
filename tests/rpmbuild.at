@@ -525,6 +525,22 @@ run rpmbuild \
 [0],
 [ignore],
 [ignore])
+
+RPMTEST_CHECK([
+run rpmbuild \
+  -bp ${RPMDATA}/SPECS/autosetup-singleroot1.spec
+],
+[0],
+[ignore],
+[ignore])
+
+RPMTEST_CHECK([
+run rpmbuild \
+  -bp ${RPMDATA}/SPECS/autosetup-singleroot2.spec
+],
+[0],
+[ignore],
+[ignore])
 RPMTEST_CLEANUP
 
 AT_SETUP([rpmbuild -ba autopatch])
@@ -2432,6 +2448,54 @@ hello debug exists
 hello.foobar debug exists
 No hello.debug
 ],
+[ignore])
+RPMTEST_CLEANUP
+
+AT_SETUP([manual debuginfo package])
+AT_KEYWORDS([build debuginfo])
+RPMTEST_CHECK([
+RPMDB_INIT
+
+runroot rpmbuild --quiet -bb \
+		--define "_prefix /usr/local" \
+		/data/SPECS/hello-debuginfo.spec
+],
+[0],
+[ignore],
+[ignore])
+
+RPMTEST_CHECK([
+
+runroot rpm -qpl /build/RPMS/*/hello-1.0-1.*.rpm
+runroot rpm -qpl /build/RPMS/*/hello-debuginfo-1.0-1.*.rpm
+],
+[0],
+[/usr/local/bin/hello
+/usr/local/share/doc/hello-1.0
+/usr/local/share/doc/hello-1.0/FAQ
+/usr/lib/debug/test.txt
+],
+[ignore])
+
+RPMTEST_CHECK([
+runroot rpmbuild --quiet -bb \
+		--define "_prefix /usr/local" \
+		--without customdebug \
+		--define "_enable_debug_packages 0" \
+		/data/SPECS/hello-debuginfo.spec
+],
+[0],
+[ignore],
+[ignore])
+
+RPMTEST_CHECK([
+runroot rpmbuild --quiet -bb \
+		--define "_prefix /usr/local" \
+		--without customdebug \
+		/data/SPECS/hello-debuginfo.spec
+],
+[1],
+[ignore],
 [ignore])
 RPMTEST_CLEANUP
 
