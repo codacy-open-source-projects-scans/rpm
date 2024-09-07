@@ -191,6 +191,29 @@ exit:
     return sigtd;
 }
 
+char ** signCmd(const char *sigfile)
+{
+    int argc = 0;
+    char **argv = NULL;
+
+    rpmPushMacro(NULL, "__plaintext_filename", NULL, "-", -1);
+    rpmPushMacro(NULL, "__signature_filename", NULL, sigfile, -1);
+
+    char *cmd = rpmExpand("%{?__gpg_sign_cmd}", NULL);
+
+    rpmPopMacro(NULL, "__plaintext_filename");
+    rpmPopMacro(NULL, "__signature_filename");
+
+    if (poptParseArgvString(cmd, &argc, (const char ***)&argv) < 0 || argc < 2) {
+	rpmlog(RPMLOG_ERR, _("Invalid sign command: %s\n"), cmd);
+	argv = _free(argv);
+    }
+
+    free(cmd);
+
+    return argv;
+}
+
 static int runGPG(sigTarget sigt, const char *sigfile)
 {
     int pid = 0, status;
@@ -201,43 +224,42 @@ static int runGPG(sigTarget sigt, const char *sigfile)
     ssize_t wantCount;
     rpm_loff_t size;
     int rc = 1; /* assume failure */
+    char **argv = NULL;
+
+    if ((argv = signCmd(sigfile)) == NULL)
+	goto exit_nowait;
 
     if (pipe(pipefd) < 0) {
         rpmlog(RPMLOG_ERR, _("Could not create pipe for signing: %m\n"));
-        goto exit;
+        goto exit_nowait;
     }
 
-    rpmPushMacro(NULL, "__plaintext_filename", NULL, "-", -1);
-    rpmPushMacro(NULL, "__signature_filename", NULL, sigfile, -1);
-
     if (!(pid = fork())) {
-	char *const *av;
-	char *cmd = NULL;
-	const char *tty = ttyname(STDIN_FILENO);
-	const char *gpg_path = NULL;
+	/* GnuPG needs extra setup, try to see if that's what we're running */
+	char *out = rpmExpand("%(", argv[0], " --version 2> /dev/null)", NULL);
+	int using_gpg = (strstr(out, "GnuPG") != NULL);
+	if (using_gpg) {
+	    const char *tty = ttyname(STDIN_FILENO);
+	    const char *gpg_path = NULL;
 
-	if (!getenv("GPG_TTY") && (!tty || setenv("GPG_TTY", tty, 0)))
-	    rpmlog(RPMLOG_WARNING, _("Could not set GPG_TTY to stdin: %m\n"));
+	    if (!getenv("GPG_TTY") && (!tty || setenv("GPG_TTY", tty, 0)))
+		rpmlog(RPMLOG_WARNING, _("Could not set GPG_TTY to stdin: %m\n"));
 
-	gpg_path = rpmExpand("%{?_gpg_path}", NULL);
-	if (gpg_path && *gpg_path != '\0')
-	    (void) setenv("GNUPGHOME", gpg_path, 1);
+	    gpg_path = rpmExpand("%{?_gpg_path}", NULL);
+	    if (gpg_path && *gpg_path != '\0')
+		(void) setenv("GNUPGHOME", gpg_path, 1);
+	}
+	free(out);
 
 	dup2(pipefd[0], STDIN_FILENO);
 	close(pipefd[1]);
 
-	cmd = rpmExpand("%{?__gpg_sign_cmd}", NULL);
-	rc = poptParseArgvString(cmd, NULL, (const char ***)&av);
-	if (!rc)
-	    rc = execve(av[0], av+1, environ);
+	rc = execve(argv[0], argv+1, environ);
 
-	rpmlog(RPMLOG_ERR, _("Could not exec %s: %s\n"), "gpg",
-			strerror(errno));
+	rpmlog(RPMLOG_ERR, _("Could not exec %s: %s\n"), argv[0],
+		strerror(errno));
 	_exit(EXIT_FAILURE);
     }
-
-    rpmPopMacro(NULL, "__plaintext_filename");
-    rpmPopMacro(NULL, "__signature_filename");
 
     close(pipefd[0]);
     fpipe = fdopen(pipefd[1], "w");
@@ -282,15 +304,18 @@ exit:
     } while (reaped == -1 && errno == EINTR);
 
     if (reaped == -1) {
-	rpmlog(RPMLOG_ERR, _("gpg waitpid failed (%s)\n"), strerror(errno));
-	return rc;
-    }
-
-    if (!WIFEXITED(status) || WEXITSTATUS(status)) {
-	rpmlog(RPMLOG_ERR, _("gpg exec failed (%d)\n"), WEXITSTATUS(status));
+	rpmlog(RPMLOG_ERR, _("%s waitpid failed (%s)\n"), argv[0],
+		strerror(errno));
+    } else if (!WIFEXITED(status) || WEXITSTATUS(status)) {
+	rpmlog(RPMLOG_ERR, _("%s exec failed (%d)\n"), argv[0],
+		WEXITSTATUS(status));
     } else {
 	rc = 0;
     }
+
+exit_nowait:
+    free(argv);
+
     return rc;
 }
 
@@ -314,13 +339,13 @@ static rpmtd makeGPGSignature(Header sigh, int ishdr, sigTarget sigt)
 	goto exit;
 
     if (stat(sigfile, &st)) {
-	/* GPG failed to write signature */
-	rpmlog(RPMLOG_ERR, _("gpg failed to write signature\n"));
+	/* External command failed to write signature */
+	rpmlog(RPMLOG_ERR, _("failed to write signature\n"));
 	goto exit;
     }
 
     pktlen = st.st_size;
-    rpmlog(RPMLOG_DEBUG, "GPG sig size: %zd\n", pktlen);
+    rpmlog(RPMLOG_DEBUG, "OpenPGP sig size: %zd\n", pktlen);
     pkt = (uint8_t *)xmalloc(pktlen);
 
     {	FD_t fd;
@@ -337,7 +362,7 @@ static rpmtd makeGPGSignature(Header sigh, int ishdr, sigTarget sigt)
 	}
     }
 
-    rpmlog(RPMLOG_DEBUG, "Got %zd bytes of GPG sig\n", pktlen);
+    rpmlog(RPMLOG_DEBUG, "Got %zd bytes of OpenPGP sig\n", pktlen);
 
     /* Parse the signature, change signature tag as appropriate. */
     sigtd = makeSigTag(sigh, ishdr, pkt, pktlen);

@@ -1,4 +1,4 @@
-FROM registry.fedoraproject.org/fedora:39 AS base
+FROM registry.fedoraproject.org/fedora:40 AS base
 MAINTAINER rpm-maint@lists.rpm.org
 
 RUN echo -e "deltarpm=0\ninstall_weak_deps=0\ntsflags=nodocs" >> /etc/dnf/dnf.conf
@@ -43,10 +43,10 @@ RUN dnf -y install \
   which \
   elfutils binutils \
   findutils sed grep gawk diffutils file patch \
-  tar unzip gzip bzip2 cpio xz \
+  tar unzip gzip bzip2 cpio xz p7zip \
   pkgconfig \
   /usr/bin/systemd-sysusers \
-  /usr/bin/gdb-add-index \
+  gdb-headless-14.2 \
   dwz \
   fsverity-utils fsverity-utils-devel \
   pandoc \
