@@ -46,10 +46,11 @@ RUN dnf -y install \
   tar unzip gzip bzip2 cpio xz p7zip \
   pkgconfig \
   /usr/bin/systemd-sysusers \
-  gdb-headless-14.2 \
+  "gdb-headless < 15" \
   dwz \
   fsverity-utils fsverity-utils-devel \
   pandoc \
+  sequoia-sq \
   libasan \
   libubsan \
   && dnf clean all
