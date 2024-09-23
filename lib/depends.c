@@ -388,7 +388,13 @@ static int addPackage(rpmts ts, Header h,
 
     /* Check for supported payload format if it's a package */
     if (key && headerCheckPayloadFormat(h) != RPMRC_OK) {
-	ec = 1;
+	ec = 3;
+	goto exit;
+    }
+
+    /* Installing v3 packages is no longer supported */
+    if (!headerIsEntry(h, RPMTAG_HEADERIMMUTABLE)) {
+	ec = 3;
 	goto exit;
     }
 
