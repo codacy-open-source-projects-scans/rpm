@@ -26,6 +26,7 @@ if (doxsrc)
 endif()
 
 install(FILES
+  	manual/about.md
 	manual/arch_dependencies.md
 	manual/autosetup.md
 	manual/boolean_dependencies.md
@@ -43,6 +44,7 @@ install(FILES
 	manual/lua.md
 	manual/macros.md
 	manual/more_dependencies.md
+	manual/philosophy.md
 	manual/plugins.md
 	manual/queryformat.md
 	manual/relocatable.md

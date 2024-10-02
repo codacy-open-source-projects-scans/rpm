@@ -4,6 +4,9 @@ title: rpm.org - RPM Reference Manual
 ---
 # RPM Reference Manual
 
+* [About this manual](about.md)
+* [RPM's Philosophy](philosophy.md)
+
 ## Package Management
 
 ### Queries and RPM Meta Data

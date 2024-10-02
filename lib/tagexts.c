@@ -475,6 +475,30 @@ static char *makeFClass(rpmfi fi)
     return (fclass != NULL) ? fclass : xstrdup("");
 }
 
+static int ftypeTag(Header h, rpmtd td, headerGetFlags hgflags,
+		    char *(ftypefunc)(rpmfi fi))
+{
+    rpmfi fi = rpmfiNew(NULL, h, RPMTAG_BASENAMES, RPMFI_NOHEADER);
+    int numfiles = rpmfiFC(fi);
+
+    if (numfiles > 0) {
+	char **ftypes = (char **)xmalloc(numfiles * sizeof(*ftypes));
+	int ix;
+
+	while ((ix = rpmfiNext(fi)) >= 0) {
+	    ftypes[ix] = ftypefunc(fi);
+	}
+
+	td->data = ftypes;
+	td->count = numfiles;
+	td->flags = RPMTD_ALLOCED | RPMTD_PTR_ALLOCED;
+	td->type = RPM_STRING_ARRAY_TYPE;
+    }
+    rpmfiFree(fi);
+
+    return (numfiles > 0); 
+}
+
 /**
  * Retrieve/generate file classes.
  * @param h		header
@@ -484,26 +508,51 @@ static char *makeFClass(rpmfi fi)
  */
 static int fileclassTag(Header h, rpmtd td, headerGetFlags hgflags)
 {
-    rpmfi fi = rpmfiNew(NULL, h, RPMTAG_BASENAMES, RPMFI_NOHEADER);
-    int numfiles = rpmfiFC(fi);
+    return ftypeTag(h, td, hgflags, makeFClass);
+}
 
-    if (numfiles > 0) {
-	char **fclasses = (char **)xmalloc(numfiles * sizeof(*fclasses));
-	int ix;
+/*
+ * Attempt to generate file mime type if missing from header:
+ * we can easily generate this for symlinks and other special types.
+ * Always return malloced strings to simplify life in filemimeTag().
+ */
+static char *makeFMime(rpmfi fi)
+{
+    char *fmime = NULL;
+    const char *hm = rpmfiFMime(fi);
 
-	rpmfiInit(fi, 0);
-	while ((ix = rpmfiNext(fi)) >= 0) {
-	    fclasses[ix] = makeFClass(fi);
+    if (hm != NULL && hm[0] != '\0') {
+	fmime = xstrdup(hm);
+    } else {
+	switch (rpmfiFMode(fi) & S_IFMT) {
+	case S_IFBLK:
+	    fmime = xstrdup("inode/blockdevice");
+	    break;
+	case S_IFCHR:
+	    fmime = xstrdup("inode/chardevice");
+	    break;
+	case S_IFDIR:
+	    fmime = xstrdup("inode/directory");
+	    break;
+	case S_IFIFO:
+	    fmime = xstrdup("inode/fifo");
+	    break;
+	case S_IFSOCK:
+	    fmime = xstrdup("inode/socket");
+	    break;
+	case S_IFLNK:
+	    fmime = xstrdup("inode/symlink");
+	    break;
 	}
-
-	td->data = fclasses;
-	td->count = numfiles;
-	td->flags = RPMTD_ALLOCED | RPMTD_PTR_ALLOCED;
-	td->type = RPM_STRING_ARRAY_TYPE;
     }
 
-    rpmfiFree(fi);
-    return (numfiles > 0); 
+    return (fmime != NULL) ? fmime : xstrdup("");
+}
+
+/* Retrieve/generate file mime types */
+static int filemimesTag(Header h, rpmtd td, headerGetFlags hgflags)
+{
+    return ftypeTag(h, td, hgflags, makeFMime);
 }
 
 /**
@@ -1043,6 +1092,7 @@ static const struct headerTagFunc_s rpmHeaderTagExtensions[] = {
     { RPMTAG_CONFLICTNEVRS,	conflictnevrsTag },
     { RPMTAG_FILENLINKS,	filenlinksTag },
     { RPMTAG_SYSUSERS,		sysusersTag },
+    { RPMTAG_FILEMIMES,		filemimesTag },
     { 0, 			NULL }
 };
 
