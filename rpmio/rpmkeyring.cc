@@ -1,6 +1,7 @@
 #include "system.h"
 
 #include <mutex>
+#include <atomic>
 #include <vector>
 #include <shared_mutex>
 #include <string>
@@ -22,7 +23,7 @@ struct rpmPubkey_s {
     std::string keyid;
     rpmPubkey primarykey;
     pgpDigParams pgpkey;
-    int nrefs;
+    std::atomic_int nrefs;
     std::shared_mutex mutex;
 };
 
@@ -31,8 +32,15 @@ using rdlock = std::shared_lock<std::shared_mutex>;
 
 struct rpmKeyring_s {
     std::map<std::string,rpmPubkey> keys; /* pointers to keys */
-    int nrefs;
+    std::atomic_int nrefs;
     std::shared_mutex mutex;
+};
+
+struct rpmKeyringIterator_s {
+    rpmKeyring keyring;
+    rdlock keyringlock;
+    std::map<std::string,rpmPubkey>::const_iterator iterator;
+    rpmPubkey current;
 };
 
 static std::string key2str(const uint8_t *keyid)
@@ -49,17 +57,61 @@ rpmKeyring rpmKeyringNew(void)
 
 rpmKeyring rpmKeyringFree(rpmKeyring keyring)
 {
-    if (keyring == NULL)
+    if (keyring == NULL || --keyring->nrefs > 0)
 	return NULL;
 
-    wrlock lock(keyring->mutex);
-    if (--keyring->nrefs == 0) {
-	for (auto & item : keyring->keys)
-	    rpmPubkeyFree(item.second);
-	delete keyring;
-    }
+    for (auto & item : keyring->keys)
+	rpmPubkeyFree(item.second);
+    delete keyring;
+
     return NULL;
 }
+
+rpmKeyringIterator rpmKeyringInitIterator(rpmKeyring keyring, int unused)
+{
+    if (!keyring || unused != 0)
+	return NULL;
+
+    return new rpmKeyringIterator_s {
+	rpmKeyringLink(keyring),
+	rdlock(keyring->mutex),
+	keyring->keys.cbegin(),
+	NULL,
+    };
+}
+
+rpmPubkey rpmKeyringIteratorNext(rpmKeyringIterator iterator)
+{
+    rpmPubkey next = NULL;
+
+    if (!iterator)
+	return NULL;
+
+    while (iterator->iterator != iterator->keyring->keys.end()) {
+	next = iterator->iterator->second;
+	iterator->iterator++;
+	if (!next->primarykey)
+	    break;
+	else
+            next = NULL;
+    }
+    rpmPubkeyFree(iterator->current);
+    iterator->current = rpmPubkeyLink(next);
+    return iterator->current;
+}
+
+rpmKeyringIterator rpmKeyringIteratorFree(rpmKeyringIterator iterator)
+{
+    if (!iterator)
+	return NULL;
+
+    rpmPubkeyFree(iterator->current);
+    iterator->keyringlock.unlock(); /* needed or rpmKeyringFree locks up */
+    rpmKeyringFree(iterator->keyring);
+    delete iterator;
+    return NULL;
+}
+
 
 int rpmKeyringModify(rpmKeyring keyring, rpmPubkey key, rpmKeyringModifyMode mode)
 {
@@ -106,7 +158,6 @@ rpmPubkey rpmKeyringLookupKey(rpmKeyring keyring, rpmPubkey key)
 rpmKeyring rpmKeyringLink(rpmKeyring keyring)
 {
     if (keyring) {
-	wrlock lock(keyring->mutex);
 	keyring->nrefs++;
     }
     return keyring;
@@ -166,12 +217,6 @@ static rpmPubkey rpmPubkeyNewSubkey(rpmPubkey primarykey, pgpDigParams pgpkey)
     return key;
 }
 
-static rpmPubkey pubkeyLink(rpmPubkey key)
-{
-    key->nrefs++;
-    return key;
-}
-
 rpmPubkey *rpmGetSubkeys(rpmPubkey primarykey, int *count)
 {
     rpmPubkey *subkeys = NULL;
@@ -179,15 +224,21 @@ rpmPubkey *rpmGetSubkeys(rpmPubkey primarykey, int *count)
     int pgpsubkeysCount = 0;
     int i;
 
-    if (primarykey && !pgpPrtParamsSubkeys(primarykey->pkt.data(), primarykey->pkt.size(),
-	    primarykey->pgpkey, &pgpsubkeys, &pgpsubkeysCount)) {
-	/* Returned to C, can't use new */
-	subkeys = (rpmPubkey *)xmalloc(pgpsubkeysCount * sizeof(*subkeys));
-	for (i = 0; i < pgpsubkeysCount; i++) {
-	    subkeys[i] = rpmPubkeyNewSubkey(primarykey, pgpsubkeys[i]);
-	    primarykey = pubkeyLink(primarykey);
+    if (primarykey) {
+
+	rdlock lock(primarykey->mutex);
+
+	if (!pgpPrtParamsSubkeys(
+		primarykey->pkt.data(), primarykey->pkt.size(),
+		primarykey->pgpkey, &pgpsubkeys, &pgpsubkeysCount)) {
+	    /* Returned to C, can't use new */
+	    subkeys = (rpmPubkey *)xmalloc(pgpsubkeysCount * sizeof(*subkeys));
+	    for (i = 0; i < pgpsubkeysCount; i++) {
+		subkeys[i] = rpmPubkeyNewSubkey(primarykey, pgpsubkeys[i]);
+		primarykey = rpmPubkeyLink(primarykey);
+	    }
+	    free(pgpsubkeys);
 	}
-	free(pgpsubkeys);
     }
     *count = pgpsubkeysCount;
 
@@ -200,7 +251,7 @@ rpmPubkey pubkeyPrimarykey(rpmPubkey key)
     if (key) {
 	wrlock lock(key->mutex);
 	if (key->primarykey == NULL) {
-	    primarykey = pubkeyLink(key);
+	    primarykey = rpmPubkeyLink(key);
 	} else {
 	    primarykey = rpmPubkeyLink(key->primarykey);
 	}
@@ -234,24 +285,27 @@ char * rpmPubkeyFingerprintAsHex(rpmPubkey key)
     return result;
 }
 
+char * rpmPubkeyKeyIDAsHex(rpmPubkey key)
+{
+    return rpmhex((const uint8_t*)(key->keyid.c_str()), key->keyid.length());
+}
+
+
 rpmPubkey rpmPubkeyFree(rpmPubkey key)
 {
-    if (key == NULL)
+    if (key == NULL || --key->nrefs > 0)
 	return NULL;
 
-    wrlock lock(key->mutex);
-    if (--key->nrefs == 0) {
-	pgpDigParamsFree(key->pgpkey);
-	rpmPubkeyFree(key->primarykey);
-	delete key;
-    }
+    pgpDigParamsFree(key->pgpkey);
+    rpmPubkeyFree(key->primarykey);
+    delete key;
+
     return NULL;
 }
 
 rpmPubkey rpmPubkeyLink(rpmPubkey key)
 {
     if (key) {
-	wrlock lock(key->mutex);
 	key->nrefs++;
     }
     return key;
@@ -264,6 +318,17 @@ char * rpmPubkeyBase64(rpmPubkey key)
     if (key) {
 	rdlock lock(key->mutex);
 	enc = rpmBase64Encode(key->pkt.data(), key->pkt.size(), -1);
+    }
+    return enc;
+}
+
+char * rpmPubkeyArmorWrap(rpmPubkey key)
+{
+    char *enc = NULL;
+
+    if (key) {
+	rdlock lock(key->mutex);
+	enc = pgpArmorWrap(PGPARMOR_PUBKEY, key->pkt.data(), key->pkt.size());
     }
     return enc;
 }

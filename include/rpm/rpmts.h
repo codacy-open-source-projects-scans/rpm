@@ -14,6 +14,7 @@
 #include <rpm/rpmsw.h>
 #include <rpm/rpmfi.h>
 #include <rpm/rpmcallback.h>
+#include <rpm/rpmkeyring.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -333,14 +334,32 @@ rpmdbMatchIterator rpmtsInitIterator(const rpmts ts, rpmDbiTagVal rpmtag,
 rpmRC rpmtsImportHeader(rpmtxn txn, Header h, rpmFlags flags);
 
 /** \ingroup rpmts
- * Import public key packet(s).
- * @todo Implicit --update policy for gpg-pubkey headers.
+ * Import public key packet(s) to transaction keystore.
  * @param ts            transaction set
  * @param pkt           pgp pubkey packet(s)
  * @param pktlen        pgp pubkey length
  * @return              RPMRC_OK/RPMRC_FAIL
  */
 rpmRC rpmtsImportPubkey(rpmts ts, const unsigned char * pkt, size_t pktlen);
+
+/** \ingroup rpmts
+ * Import public key packet(s) to transaction keystore.
+ * @param txn           transaction handle
+ * @param pkt           pgp pubkey packet(s)
+ * @param pktlen        pgp pubkey length
+ * @return              RPMRC_OK/RPMRC_FAIL
+ */
+rpmRC rpmtxnImportPubkey(rpmtxn txn, const unsigned char * pkt, size_t pktlen);
+
+/** \ingroup rpmts
+ * Delete public key from transaction keystore.
+ * @param txn           transaction handle
+ * @param key		public key
+ * @return              RPMRC_OK on success
+ * 			RPMRC_NOTFOUND if key not found
+ * 			RPMRC_FAIL on other failure
+ */
+rpmRC rpmtxnDeletePubkey(rpmtxn txn, rpmPubkey key);
 
 /** \ingroup rpmts
  * Retrieve handle for keyring used for this transaction set

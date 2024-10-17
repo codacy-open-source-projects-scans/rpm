@@ -35,6 +35,137 @@ runroot rpmkeys -Kv /data/RPMS/hello-1.0-1.i386.rpm
 [])
 RPMTEST_CLEANUP
 
+AT_SETUP([rpmkeys key update and delete (rpmdb)])
+AT_KEYWORDS([rpmkeys signature])
+RPMDB_INIT
+# currently the default but make it explicit
+# root's .rpmmacros used to keep this build prefix independent
+echo "%_keyring rpmdb" >> "${RPMTEST}"/root/.rpmmacros
+RPMTEST_CHECK([
+runroot rpmkeys --import /data/keys/rpm.org-rsa-2048-test.pub
+runroot rpmkeys -Kv /data/RPMS/hello-2.0-1.x86_64-signed-with-new-subkey.rpm
+],
+[1],
+[/data/RPMS/hello-2.0-1.x86_64-signed-with-new-subkey.rpm:
+    Header V4 EdDSA/SHA512 Signature, key ID 6323c42711450b6c: NOKEY
+    Header SHA256 digest: OK
+    Payload SHA256 digest: OK
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpmkeys --list|wc -l
+runroot rpmkeys --import /data/keys/rpm.org-rsa-2048-add-subkey.asc
+runroot rpmkeys --list|wc -l
+],
+[0],
+[1
+1
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpmkeys -Kv /data/RPMS/hello-2.0-1.x86_64-signed-with-new-subkey.rpm
+],
+[0],
+[/data/RPMS/hello-2.0-1.x86_64-signed-with-new-subkey.rpm:
+    Header V4 EdDSA/SHA512 Signature, Key Fingerprint: 771b18d3d7baa28734333c424344591e1964c5fc: OK
+    Header SHA256 digest: OK
+    Payload SHA256 digest: OK
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpmkeys --delete abcd gimmekey 1111aaaa2222bbbb
+],
+[1],
+[],
+[error: invalid key id: abcd
+error: invalid key id: gimmekey
+error: key not found: 1111aaaa2222bbbb
+])
+
+RPMTEST_CHECK([
+runroot rpmkeys --delete 1964c5fc
+],
+[0],
+[],
+[])
+
+RPMTEST_CHECK([
+runroot rpmkeys --list
+],
+[0],
+[],
+[])
+RPMTEST_CLEANUP
+
+AT_SETUP([rpmkeys key update (fs)])
+AT_KEYWORDS([rpmkeys signature])
+RPMDB_INIT
+# root's .rpmmacros used to keep this build prefix independent
+echo "%_keyring fs" >> "${RPMTEST}"/root/.rpmmacros
+RPMTEST_CHECK([
+runroot rpmkeys --import /data/keys/rpm.org-rsa-2048-test.pub
+runroot rpmkeys -Kv /data/RPMS/hello-2.0-1.x86_64-signed-with-new-subkey.rpm
+],
+[1],
+[/data/RPMS/hello-2.0-1.x86_64-signed-with-new-subkey.rpm:
+    Header V4 EdDSA/SHA512 Signature, key ID 6323c42711450b6c: NOKEY
+    Header SHA256 digest: OK
+    Payload SHA256 digest: OK
+],
+[])
+
+RPMTEST_CHECK([
+# XXX rpmkeys --list doesn't yet work with fs keystore
+runroot_other find /usr/lib/sysimage/rpm/pubkeys -name "*.key" | wc -l
+runroot rpmkeys --import /data/keys/rpm.org-rsa-2048-add-subkey.asc
+runroot_other find /usr/lib/sysimage/rpm/pubkeys -name "*.key" | wc -l
+],
+[0],
+[1
+1
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpmkeys -Kv /data/RPMS/hello-2.0-1.x86_64-signed-with-new-subkey.rpm
+],
+[0],
+[/data/RPMS/hello-2.0-1.x86_64-signed-with-new-subkey.rpm:
+    Header V4 EdDSA/SHA512 Signature, Key Fingerprint: 771b18d3d7baa28734333c424344591e1964c5fc: OK
+    Header SHA256 digest: OK
+    Payload SHA256 digest: OK
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpmkeys --delete abcd gimmekey 1111aaaa2222bbbb
+],
+[1],
+[],
+[error: invalid key id: abcd
+error: invalid key id: gimmekey
+error: key not found: 1111aaaa2222bbbb
+])
+
+RPMTEST_CHECK([
+runroot rpmkeys --delete 1964c5fc
+],
+[0],
+[],
+[])
+
+RPMTEST_CHECK([
+# XXX rpmkeys --list doesn't yet work with fs keystore
+runroot_other find /usr/lib/sysimage/rpm/pubkeys -name "*.key" | wc -l
+],
+[0],
+[0
+],
+[])
+RPMTEST_CLEANUP
 # ------------------------------
 # Test rpmkeys write errors
 AT_SETUP([[rpmkeys -K no space left on stdout]])
@@ -213,7 +344,9 @@ AT_SKIP_IF([test x$PGP = xdummy])
 RPMTEST_CHECK([
 RPMDB_INIT
 
-runroot rpmkeys --import /data/keys/rpm.org-rsa-2048-test.pub
+runroot rpmkeys \
+	--define "_keyring rpmdb" \
+	--import /data/keys/rpm.org-rsa-2048-test.pub
 runroot rpm -qi gpg-pubkey-1964c5fc-58e63918|grep -v Date|grep -v Version:
 runroot rpm -q --provides gpg-pubkey-1964c5fc-58e63918],
 [0],
@@ -275,7 +408,6 @@ AT_SKIP_IF([test x$PGP = xdummy])
 RPMTEST_CHECK([
 RPMDB_INIT
 
-runroot_other mkdir -p /tmp/kr
 runroot rpmkeys \
 	--define "_keyringpath /tmp/kr" \
 	--define "_keyring fs" \
@@ -329,7 +461,7 @@ runroot rpmkeys --define '_pkgverify_level all' -Kv /data/RPMS/hello-2.0-1.x86_6
 echo Importing key:
 runroot rpmkeys --quiet --import /data/keys/alice.asc; echo $?
 echo Checking for key:
-runroot rpm -qi gpg-pubkey-eb04e625-* | grep Version | head -n1
+runroot rpmkeys --list b6542f92f30650c36b6f41bcb3a771bfeb04e625
 echo Checking package after importing key:
 runroot rpmkeys --define '_pkgverify_level all' -Kv /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm; echo $?
 echo Checking package after importing key, no digest:
@@ -350,7 +482,7 @@ runroot rpmkeys --define '_pkgverify_level all' -Kv --nosignature /data/RPMS/hel
 Importing key:
 0
 Checking for key:
-Version     : eb04e625
+b6542f92f30650c36b6f41bcb3a771bfeb04e625 Alice <alice@example.org> public key
 Checking package after importing key:
 /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm:
     Header V4 RSA/SHA512 Signature, Key Fingerprint: b6542f92f30650c36b6f41bcb3a771bfeb04e625: OK
@@ -387,7 +519,7 @@ runroot rpmkeys --define '_pkgverify_level all' -Kv /data/RPMS/hello-2.0-1.x86_6
 echo Importing key:
 runroot rpmkeys --quiet --import /data/keys/alice-expired-subkey.asc 2>&1; echo $?
 echo Checking for key:
-runroot rpm -qi gpg-pubkey-eb04e625-* | grep Version | head -n1
+runroot rpmkeys --list b6542f92f30650c36b6f41bcb3a771bfeb04e625
 echo Checking package after importing key:
 runroot rpmkeys --define '_pkgverify_level all' -Kv /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm 2>&1; echo $?
 echo Checking package after importing key, no digest:
@@ -408,7 +540,7 @@ runroot rpmkeys --define '_pkgverify_level all' -Kv --nosignature /data/RPMS/hel
 Importing key:
 0
 Checking for key:
-Version     : eb04e625
+b6542f92f30650c36b6f41bcb3a771bfeb04e625 Alice <alice@example.org> public key
 Checking package after importing key:
 /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm:
 RPMOUTPUT_LEGACY([error: Subkey 1f71177215217ee0 of key b3a771bfeb04e625 (Alice <alice@example.org>) expired on 2022-04-12 00:00:15])dnl
@@ -457,7 +589,7 @@ runroot rpmkeys --define '_pkgverify_level all' -Kv /data/RPMS/hello-2.0-1.x86_6
 echo Importing key:
 runroot rpmkeys --quiet --import /data/keys/alice-revoked-subkey.asc 2>&1; echo $?
 echo Checking for key:
-runroot rpm -qi gpg-pubkey-eb04e625-* | grep Version | head -n1
+runroot rpmkeys --list b6542f92f30650c36b6f41bcb3a771bfeb04e625
 echo Checking package after importing key:
 runroot rpmkeys --define '_pkgverify_level all' -Kv /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm 2>&1; echo $?
 echo Checking package after importing key, no digest:
@@ -478,7 +610,7 @@ runroot rpmkeys --define '_pkgverify_level all' -Kv --nosignature /data/RPMS/hel
 Importing key:
 0
 Checking for key:
-Version     : eb04e625
+b6542f92f30650c36b6f41bcb3a771bfeb04e625 Alice <alice@example.org> public key
 Checking package after importing key:
 /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm:
 RPMOUTPUT_LEGACY([error: Subkey 1f71177215217ee0 of key b3a771bfeb04e625 (Alice <alice@example.org>) has been revoked])dnl
@@ -570,7 +702,9 @@ AT_KEYWORDS([rpmkeys import])
 AT_SKIP_IF([test x$PGP = xdummy])
 RPMDB_INIT
 RPMTEST_CHECK([
-runroot rpmkeys --import /data/keys/different-creation-times.asc
+runroot rpmkeys \
+	--define "_keyring rpmdb" \
+	--import /data/keys/different-creation-times.asc
 runroot rpm -qi gpg-pubkey-62837bea-62553e62|grep -v Date|grep -v Version:
 runroot rpm -q --provides gpg-pubkey
 ],
