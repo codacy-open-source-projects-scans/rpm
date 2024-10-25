@@ -196,7 +196,6 @@ static void rpmsinfoInit(const struct vfyinfo_s *vinfo,
 	char *lints = NULL;
         int ec = pgpPrtParams2((const uint8_t *)data, dlen, PGPTAG_SIGNATURE,
 				&sinfo->sig, &lints);
-	const uint8_t *signid;
 	if (ec) {
 	    if (lints) {
 		rasprintf(&sinfo->msg,
@@ -214,8 +213,7 @@ static void rpmsinfoInit(const struct vfyinfo_s *vinfo,
 	    free(lints);
 	}
 	sinfo->hashalgo = pgpDigParamsAlgo(sinfo->sig, PGPVAL_HASHALGO);
-	signid = pgpDigParamsSignID(sinfo->sig);	/* 8 bytes key id */
-	sinfo->keyid = signid[4] << 24 | signid[5] << 16 | signid[6] << 8 | signid[7];
+	sinfo->keyid = rpmhex(pgpDigParamsSignID(sinfo->sig), PGP_KEYID_LEN);
     } else if (sinfo->type == RPMSIG_DIGEST_TYPE) {
 	if (td->type == RPM_BIN_TYPE) {
 	    sinfo->dig = rpmhex((const uint8_t *)data, dlen);
@@ -251,6 +249,7 @@ static void rpmsinfoFini(struct rpmsinfo_s *sinfo)
 	rpmPubkeyFree(sinfo->key);
 	free(sinfo->msg);
 	free(sinfo->descr);
+	free(sinfo->keyid);
 	memset(sinfo, 0, sizeof(*sinfo));
     }
 }
@@ -307,7 +306,7 @@ const char *rpmsinfoDescr(struct rpmsinfo_s *sinfo)
 char *rpmsinfoMsg(struct rpmsinfo_s *sinfo)
 {
     char *msg = NULL;
-    char *fphex = NULL;
+    const char *fphex = NULL;
     char *fpmsg = NULL;
     char * descr = xstrdup(rpmsinfoDescr(sinfo));
     if (sinfo->key) {
@@ -330,7 +329,6 @@ char *rpmsinfoMsg(struct rpmsinfo_s *sinfo)
 		  descr, fpmsg, rpmSigString(sinfo->rc));
     }
     free(descr);
-    free(fphex);
     free(fpmsg);
     return msg;
 }

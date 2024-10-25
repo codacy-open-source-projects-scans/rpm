@@ -6,6 +6,7 @@
 #include <shared_mutex>
 #include <string>
 #include <map>
+#include <cassert>
 
 #include <rpm/rpmstring.h>
 #include <rpm/rpmpgp.h>
@@ -20,18 +21,18 @@ int _print_pkts = 0;
 
 struct rpmPubkey_s {
     std::vector<uint8_t> pkt;
-    std::string keyid;
+    std::string keyid;		/* hex keyid */
+    std::string fp;		/* hex fingerprint */
     rpmPubkey primarykey;
     pgpDigParams pgpkey;
     std::atomic_int nrefs;
-    std::shared_mutex mutex;
 };
 
 using wrlock = std::unique_lock<std::shared_mutex>;
 using rdlock = std::shared_lock<std::shared_mutex>;
 
 struct rpmKeyring_s {
-    std::map<std::string,rpmPubkey> keys; /* pointers to keys */
+    std::multimap<std::string,rpmPubkey> keys; /* pointers to keys */
     std::atomic_int nrefs;
     std::shared_mutex mutex;
 };
@@ -45,7 +46,10 @@ struct rpmKeyringIterator_s {
 
 static std::string key2str(const uint8_t *keyid)
 {
-    return std::string(reinterpret_cast<const char *>(keyid), PGP_KEYID_LEN);
+    char *hexid = rpmhex(keyid, PGP_KEYID_LEN);
+    std::string s { hexid };
+    free(hexid);
+    return s;
 }
 
 rpmKeyring rpmKeyringNew(void)
@@ -123,17 +127,39 @@ int rpmKeyringModify(rpmKeyring keyring, rpmPubkey key, rpmKeyringModifyMode mod
 
     /* check if we already have this key, but always wrlock for simplicity */
     wrlock lock(keyring->mutex);
-    auto item = keyring->keys.find(key->keyid);
-    if (item != keyring->keys.end() && mode == RPMKEYRING_DELETE) {
+    auto range = keyring->keys.equal_range(key->keyid);
+    auto item = range.first;
+    for (; item != range.second; ++item) {
+	if (item->second->fp == key->fp)
+	    break;
+    }
+    if (item != range.second && (mode == RPMKEYRING_DELETE || mode == RPMKEYRING_REPLACE)) {
+	/* remove subkeys */
+	auto it = keyring->keys.begin();
+	while (it != keyring->keys.end()) {
+	    if (it->second->primarykey == item->second) {
+		rpmPubkeyFree(it->second);
+		it = keyring->keys.erase(it);
+	    } else {
+		++it;
+	    }
+	}
 	rpmPubkeyFree(item->second);
 	keyring->keys.erase(item);
 	rc = 0;
-    } else if (item != keyring->keys.end() && mode == RPMKEYRING_REPLACE) {
-	rpmPubkeyFree(item->second);
-	item->second = rpmPubkeyLink(key);
-	rc = 0;
-    } else if (item == keyring->keys.end() && (mode == RPMKEYRING_ADD ||mode == RPMKEYRING_REPLACE) ) {
+    } else if ((item == range.second && mode == RPMKEYRING_ADD) || mode == RPMKEYRING_REPLACE) {
+	int subkeysCount = 0;
+	rpmPubkey *subkeys = rpmGetSubkeys(key, &subkeysCount);
 	keyring->keys.insert({key->keyid, rpmPubkeyLink(key)});
+	rpmlog(RPMLOG_DEBUG, "added key %s to keyring\n", rpmPubkeyFingerprintAsHex(key));
+	/* add subkeys */
+	for (int i = 0; i < subkeysCount; i++) {
+	    rpmPubkey subkey = subkeys[i];
+	    keyring->keys.insert({subkey->keyid, subkey});
+	    rpmlog(RPMLOG_DEBUG,
+		   "added subkey %d of main key %s to keyring\n", i, rpmPubkeyFingerprintAsHex(key));
+	}
+	free(subkeys);
 	rc = 0;
     }
 
@@ -150,9 +176,13 @@ rpmPubkey rpmKeyringLookupKey(rpmKeyring keyring, rpmPubkey key)
     if (keyring == NULL || key == NULL)
 	return NULL;
     rdlock lock(keyring->mutex);
-    auto item = keyring->keys.find(key->keyid);
-    rpmPubkey rkey = item == keyring->keys.end() ? NULL : rpmPubkeyLink(item->second);
-    return rkey;
+
+    auto range = keyring->keys.equal_range(key->keyid);
+    for (auto item = range.first; item != range.second; ++item) {
+	if (item->second->fp == key->fp)
+	    return rpmPubkeyLink(item->second);
+    }
+    return NULL;
 }
 
 rpmKeyring rpmKeyringLink(rpmKeyring keyring)
@@ -184,6 +214,9 @@ rpmPubkey rpmPubkeyNew(const uint8_t *pkt, size_t pktlen)
     rpmPubkey key = NULL;
     pgpDigParams pgpkey = NULL;
     pgpKeyID_t keyid;
+    uint8_t *fp = NULL;
+    size_t fplen = 0;
+    char *hexfp = NULL;
     
     if (pkt == NULL || pktlen == 0)
 	goto exit;
@@ -194,6 +227,10 @@ rpmPubkey rpmPubkeyNew(const uint8_t *pkt, size_t pktlen)
     if (pgpPrtParams(pkt, pktlen, PGPTAG_PUBLIC_KEY, &pgpkey))
 	goto exit;
 
+    if (pgpPubkeyFingerprint(pkt, pktlen, &fp, &fplen))
+	goto exit;
+    hexfp = rpmhex(fp, fplen);
+
     key = new rpmPubkey_s {};
     key->primarykey = NULL;
     key->pkt.resize(pktlen);
@@ -201,8 +238,11 @@ rpmPubkey rpmPubkeyNew(const uint8_t *pkt, size_t pktlen)
     key->nrefs = 1;
     memcpy(key->pkt.data(), pkt, pktlen);
     key->keyid = key2str(keyid);
+    key->fp = hexfp;
 
 exit:
+    free(hexfp);
+    free(fp);
     return key;
 }
 
@@ -225,9 +265,6 @@ rpmPubkey *rpmGetSubkeys(rpmPubkey primarykey, int *count)
     int i;
 
     if (primarykey) {
-
-	rdlock lock(primarykey->mutex);
-
 	if (!pgpPrtParamsSubkeys(
 		primarykey->pkt.data(), primarykey->pkt.size(),
 		primarykey->pgpkey, &pgpsubkeys, &pgpsubkeysCount)) {
@@ -249,7 +286,6 @@ rpmPubkey pubkeyPrimarykey(rpmPubkey key)
 {
     rpmPubkey primarykey = NULL;
     if (key) {
-	wrlock lock(key->mutex);
 	if (key->primarykey == NULL) {
 	    primarykey = rpmPubkeyLink(key);
 	} else {
@@ -266,28 +302,24 @@ int rpmPubkeyFingerprint(rpmPubkey key, uint8_t **fp, size_t *fplen)
     int rc = -1;
     rpmPubkey primarykey = pubkeyPrimarykey(key);
     if (primarykey) {
-	rdlock lock(primarykey->mutex);
 	rc = pgpPubkeyFingerprint(primarykey->pkt.data(), primarykey->pkt.size(), fp, fplen);
     }
     primarykey = rpmPubkeyFree(primarykey);
     return rc;
 }
 
-char * rpmPubkeyFingerprintAsHex(rpmPubkey key)
+const char * rpmPubkeyFingerprintAsHex(rpmPubkey key)
 {
-    char * result = NULL;
-    uint8_t *fp = NULL;
-    size_t fplen = 0;
-    if (!rpmPubkeyFingerprint(key, &fp, &fplen)) {
-	result = rpmhex(fp, fplen);
-	free(fp);
+    const char * result = NULL;
+    if (key) {
+	result = key->fp.c_str();
     }
     return result;
 }
 
-char * rpmPubkeyKeyIDAsHex(rpmPubkey key)
+const char * rpmPubkeyKeyIDAsHex(rpmPubkey key)
 {
-    return rpmhex((const uint8_t*)(key->keyid.c_str()), key->keyid.length());
+    return key ? key->keyid.c_str() : NULL;
 }
 
 
@@ -316,7 +348,6 @@ char * rpmPubkeyBase64(rpmPubkey key)
     char *enc = NULL;
 
     if (key) {
-	rdlock lock(key->mutex);
 	enc = rpmBase64Encode(key->pkt.data(), key->pkt.size(), -1);
     }
     return enc;
@@ -327,7 +358,6 @@ char * rpmPubkeyArmorWrap(rpmPubkey key)
     char *enc = NULL;
 
     if (key) {
-	rdlock lock(key->mutex);
 	enc = pgpArmorWrap(PGPARMOR_PUBKEY, key->pkt.data(), key->pkt.size());
     }
     return enc;
@@ -338,11 +368,8 @@ rpmRC rpmPubkeyMerge(rpmPubkey oldkey, rpmPubkey newkey, rpmPubkey *mergedkeyp)
     rpmPubkey mergedkey = NULL;
     uint8_t *mergedpkt = NULL;
     size_t mergedpktlen = 0;
-    rpmRC rc;
 
-    rdlock olock(oldkey->mutex);
-    rdlock nlock(newkey->mutex);
-    rc = pgpPubkeyMerge(oldkey->pkt.data(), oldkey->pkt.size(), newkey->pkt.data(), newkey->pkt.size(), &mergedpkt, &mergedpktlen, 0);
+    rpmRC rc = pgpPubkeyMerge(oldkey->pkt.data(), oldkey->pkt.size(), newkey->pkt.data(), newkey->pkt.size(), &mergedpkt, &mergedpktlen, 0);
     if (rc == RPMRC_OK && (mergedpktlen != oldkey->pkt.size() || memcmp(mergedpkt, oldkey->pkt.data(), mergedpktlen) != 0)) {
 	mergedkey = rpmPubkeyNew(mergedpkt, mergedpktlen);
 	if (!mergedkey)
@@ -363,50 +390,67 @@ pgpDigParams rpmPubkeyPgpDigParams(rpmPubkey key)
     return params;
 }
 
-static rpmPubkey findbySig(rpmKeyring keyring, pgpDigParams sig)
+rpmRC pubKeyVerify(rpmPubkey key, pgpDigParams sig, DIGEST_CTX ctx, std::vector<std::pair<int, std::string>> &results)
 {
-    rpmPubkey key = NULL;
+    rpmRC rc = RPMRC_FAIL;
+    char *lints = NULL;
+    rc = pgpVerifySignature2(key ? key->pgpkey : NULL, sig, ctx, &lints);
 
-    if (keyring && sig) {
-	rdlock lock(keyring->mutex);
-	auto keyid = key2str(pgpDigParamsSignID(sig));
-	auto item = keyring->keys.find(keyid);
-	if (item != keyring->keys.end()) {
-	    key = item->second;
-	    pgpDigParams pub = key->pgpkey;
-	    /* Do the parameters match the signature? */
-	    if ((pgpDigParamsAlgo(sig, PGPVAL_PUBKEYALGO)
-                 != pgpDigParamsAlgo(pub, PGPVAL_PUBKEYALGO)) ||
-                memcmp(pgpDigParamsSignID(sig), pgpDigParamsSignID(pub),
-                       PGP_KEYID_LEN)) {
-		key = NULL;
-	    }
-	}
-    }
-    return key;
+    /* found right key, discard error messages from wrong keys */
+    if (rc == RPMRC_OK)
+	results.clear();
+
+    results.push_back({rc, std::string(lints ? lints : "")});
+    free(lints);
+    return rc;
 }
 
 rpmRC rpmKeyringVerifySig2(rpmKeyring keyring, pgpDigParams sig, DIGEST_CTX ctx, rpmPubkey * keyptr)
 {
     rpmRC rc = RPMRC_FAIL;
+    rpmPubkey key = NULL;
 
     if (sig && ctx) {
-	pgpDigParams pgpkey = NULL;
-	rpmPubkey key = findbySig(keyring, sig);
+	rdlock lock(keyring->mutex);
+	auto keyid = key2str(pgpDigParamsSignID(sig));
+	std::vector<std::pair<int, std::string>> results = {};
 
-	if (key)
-	    pgpkey = key->pgpkey;
+	/* Look for verifying key */
+	auto range = keyring->keys.equal_range(keyid);
 
-	/* We call verify even if key not found for a signature sanity check */
-	char *lints = NULL;
-	rc = pgpVerifySignature2(pgpkey, sig, ctx, &lints);
-	if (lints) {
-	    rpmlog(rc ? RPMLOG_ERR : RPMLOG_WARNING, "%s\n", lints);
-	    free(lints);
+	for (auto it = range.first; it != range.second; ++it) {
+	    key = it->second;
+
+	    /* Do the parameters match the signature? */
+	    if (pgpDigParamsAlgo(sig, PGPVAL_PUBKEYALGO)
+		!= pgpDigParamsAlgo(key->pgpkey, PGPVAL_PUBKEYALGO))
+	    {
+		continue;
+	    }
+
+	    rc = pubKeyVerify(key, sig, ctx, results);
+
+	    if (rc == RPMRC_OK)
+		break;
 	}
-	if (keyptr) {
-	    *keyptr = pubkeyPrimarykey(key);
+
+	/* No key, sanity check signature*/
+	if (results.empty()) {
+	    key = NULL;
+	    rc = pubKeyVerify(NULL, sig, ctx, results);
+	    assert(rc != RPMRC_OK);
 	}
+
+	for (auto const & item : results) {
+	    if (!item.second.empty()) {
+		rpmlog(item.first ? RPMLOG_ERR : RPMLOG_WARNING, "%s\n",
+		       item.second.c_str());
+	    }
+	}
+    }
+
+    if (keyptr) {
+	*keyptr = pubkeyPrimarykey(key);
     }
 
     return rc;

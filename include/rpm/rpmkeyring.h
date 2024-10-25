@@ -159,16 +159,16 @@ int rpmPubkeyFingerprint(rpmPubkey key, uint8_t **fp, size_t *fplen);
 /** \ingroup rpmkeyring
  * Return fingerprint of primary key as hex string
  * @param key		Pubkey
- * @ return		string or NULL on failure
+ * @return		string or NULL on failure
  */
-char * rpmPubkeyFingerprintAsHex(rpmPubkey key);
+const char * rpmPubkeyFingerprintAsHex(rpmPubkey key);
 
 /** \ingroup rpmkeyring
  * Return key ID of key as hex string
  * @param key		Pubkey
- * @ return		string or NULL on failure
+ * @return		string or NULL on failure
  */
-char * rpmPubkeyKeyIDAsHex(rpmPubkey key);
+const char * rpmPubkeyKeyIDAsHex(rpmPubkey key);
 
 /** \ingroup rpmkeyring
  * Return pgp params of key
