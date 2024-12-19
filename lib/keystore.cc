@@ -3,6 +3,8 @@
 #include <string>
 
 #include <fcntl.h>
+#include <unistd.h>
+#include <sys/file.h>
 
 #include <rpm/header.h>
 #include <rpm/rpmbase64.h>
@@ -15,24 +17,20 @@
 #include <rpm/rpmts.h>
 #include <rpm/rpmtypes.h>
 
-#include "keystore.hh"
 #include "rpmts_internal.hh"
 
 #include "debug.h"
 
 using std::string;
+using namespace rpm;
 
-enum {
-    KEYRING_RPMDB 	= 1,
-    KEYRING_FS		= 2,
-};
+static int makePubkeyHeader(rpmts ts, rpmPubkey key, Header * hdrp);
 
-static int rpmtsLoadKeyringFromFiles(rpmts ts, rpmKeyring keyring)
+static rpmRC load_keys_from_glob(rpmtxn txn, rpmKeyring keyring, string glob)
 {
     ARGV_t files = NULL;
     /* XXX TODO: deal with chroot path issues */
-    char *pkpath = rpmGetPath(ts->rootDir, "%{_keyringpath}/*.key", NULL);
-    int nkeys = 0;
+    char *pkpath = rpmGetPath(rpmtxnRootDir(txn), glob.c_str(), NULL);
 
     rpmlog(RPMLOG_DEBUG, "loading keyring from pubkeys in %s\n", pkpath);
     if (rpmGlob(pkpath, NULL, &files)) {
@@ -50,20 +48,66 @@ static int rpmtsLoadKeyringFromFiles(rpmts ts, rpmKeyring keyring)
 
 	if (rpmKeyringAddKey(keyring, key) == 0) {
 	    rpmlog(RPMLOG_DEBUG, "Loaded key %s\n", *f);
-	    nkeys++;
 	}
 	rpmPubkeyFree(key);
     }
 exit:
     free(pkpath);
     argvFree(files);
-    return nkeys;
+    return RPMRC_OK;
 }
 
-static rpmRC rpmtsDeleteFSKey(rpmtxn txn, const string & keyid, const string & newname = "")
+static rpmRC write_key_to_disk(rpmPubkey key, string & dir, string & filename, int replace, rpmFlags flags)
+{
+    rpmRC rc = RPMRC_FAIL;
+    char *keyval = rpmPubkeyArmorWrap(key);
+    string tmppath = "";
+    string path = dir + "/" + filename;
+
+    if (replace) {
+	tmppath =  dir + "/" + filename + ".new";
+	unlink(tmppath.c_str());
+    }
+
+    if (rpmMkdirs(NULL, dir.c_str())) {
+	rpmlog(RPMLOG_ERR, _("failed to create keyring directory %s: %s\n"),
+	       path.c_str(), strerror(errno));
+	goto exit;
+    }
+
+    if (FD_t fd = Fopen(replace ? tmppath.c_str() : path.c_str(), "wx")) {
+	size_t keylen = strlen(keyval);
+	if (Fwrite(keyval, 1, keylen, fd) == keylen)
+	    rc = RPMRC_OK;
+	Fclose(fd);
+    }
+    if (!rc && replace && rename(tmppath.c_str(), path.c_str()) != 0)
+	rc = RPMRC_FAIL;
+
+    if (rc) {
+	rpmlog(RPMLOG_ERR, _("failed to import key: %s: %s\n"),
+	       replace ? tmppath.c_str() : path.c_str(), strerror(errno));
+	if (replace)
+	    unlink(tmppath.c_str());
+    }
+
+exit:
+    free(keyval);
+    return rc;
+}
+
+
+/*****************************************************************************/
+
+rpmRC keystore_fs::load_keys(rpmtxn txn, rpmKeyring keyring)
+{
+    return load_keys_from_glob(txn, keyring, "%{_keyringpath}/*.key");
+}
+
+rpmRC keystore_fs::delete_key(rpmtxn txn, const string & keyid, const string & newname)
 {
     rpmRC rc = RPMRC_NOTFOUND;
-    string keyglob = "gpg-pubkey-" + keyid + "-*.key";
+    string keyglob = "gpg-pubkey-" + keyid + "*.key";
     ARGV_t files = NULL;
     char *pkpath = rpmGenPath(rpmtxnRootDir(txn), "%{_keyringpath}/", keyglob.c_str());
     if (rpmGlob(pkpath, NULL, &files) == 0) {
@@ -79,81 +123,141 @@ static rpmRC rpmtsDeleteFSKey(rpmtxn txn, const string & keyid, const string & n
     return rc;
 }
 
-static rpmRC rpmtsDeleteFSKey(rpmtxn txn, rpmPubkey key)
+rpmRC keystore_fs::delete_key(rpmtxn txn, rpmPubkey key)
 {
-    return rpmtsDeleteFSKey(txn, rpmPubkeyFingerprintAsHex(key));
+    return delete_key(txn, rpmPubkeyFingerprintAsHex(key));
 }
 
-static rpmRC rpmtsImportFSKey(rpmtxn txn, Header h, rpmFlags flags, int replace)
+rpmRC keystore_fs::import_key(rpmtxn txn, rpmPubkey key, int replace, rpmFlags flags)
 {
     rpmRC rc = RPMRC_FAIL;
-    char *keyfmt = headerFormat(h, "%{nvr}.key", NULL);
-    char *keyval = headerGetAsString(h, RPMTAG_DESCRIPTION);
-    char *path = rpmGenPath(rpmtxnRootDir(txn), "%{_keyringpath}/", keyfmt);
-    char *tmppath = NULL;
+    string fp = rpmPubkeyFingerprintAsHex(key);
+    string keyfmt = "gpg-pubkey-" + fp + ".key";
+    char *dir = rpmGenPath(rpmtxnRootDir(txn), "%{_keyringpath}/", NULL);
+    string dirstr = dir;
 
-    if (replace) {
-	rasprintf(&tmppath, "%s.new", path);
-	unlink(tmppath);
-    }
-
-    if (rpmMkdirs(rpmtxnRootDir(txn), "%{_keyringpath}")) {
-	rpmlog(RPMLOG_ERR, _("failed to create keyring directory %s: %s\n"),
-		path, strerror(errno));
-	goto exit;
-    }
-
-    if (FD_t fd = Fopen(tmppath ? tmppath : path, "wx")) {
-	size_t keylen = strlen(keyval);
-	if (Fwrite(keyval, 1, keylen, fd) == keylen)
-	    rc = RPMRC_OK;
-	Fclose(fd);
-    }
-    if (!rc && tmppath && rename(tmppath, path) != 0)
-	rc = RPMRC_FAIL;
-
-    if (rc) {
-	rpmlog(RPMLOG_ERR, _("failed to import key: %s: %s\n"),
-		tmppath ? tmppath : path, strerror(errno));
-	if (tmppath)
-	    unlink(tmppath);
-    }
+    rc = write_key_to_disk(key, dirstr, keyfmt, replace, flags);
 
     if (!rc && replace) {
 	/* find and delete the old pubkey entry */
-	char *keyid = headerFormat(h, "%{version}", NULL);
-	if (rpmtsDeleteFSKey(txn, keyid, keyfmt) == RPMRC_NOTFOUND) {
+	if (delete_key(txn, fp, keyfmt) == RPMRC_NOTFOUND) {
 	    /* make sure an old, short keyid version gets removed */
-	    rpmtsDeleteFSKey(txn, keyid+32, keyfmt);
+	    delete_key(txn, fp.substr(32), keyfmt);
 	}
-	free(keyid);
-
     }
 
-exit:
-    free(path);
-    free(keyval);
-    free(keyfmt);
-    free(tmppath);
+    free(dir);
     return rc;
 }
 
-static int rpmtsLoadKeyringFromDB(rpmts ts, rpmKeyring keyring)
+/*****************************************************************************/
+
+static int acquire_write_lock(rpmtxn txn)
+{
+    char * keyringpath = rpmGenPath(rpmtxnRootDir(txn), "%{_keyringpath}/", NULL);
+    char * lockpath = rpmGenPath(rpmtxnRootDir(txn), "%{_keyringpath}/", "writelock");
+    int fd = -1;
+
+    if (rpmMkdirs(NULL, keyringpath)) {
+	rpmlog(RPMLOG_ERR, _("failed to create keyring directory %s: %s\n"),
+	       keyringpath, strerror(errno));
+	goto exit;
+    }
+
+    if ((fd = open(lockpath, O_WRONLY|O_CREAT, 644)) == -1) {
+	rpmlog(RPMLOG_ERR, _("Can't create writelock for keyring at %s: %s\n"), keyringpath, strerror(errno));
+    } else if (flock(fd, LOCK_EX|LOCK_NB)) {
+	rpmlog(RPMLOG_ERR, _("Can't acquire writelock for keyring at %s\n"), keyringpath);
+	close(fd);
+	fd = -1;
+    }
+
+ exit:
+    free(keyringpath);
+    free(lockpath);
+    return fd;
+}
+
+static void free_write_lock(int fd)
+{
+    flock(fd, LOCK_UN);
+}
+
+rpmRC keystore_openpgp_cert_d::load_keys(rpmtxn txn, rpmKeyring keyring)
+{
+    return load_keys_from_glob(txn, keyring, "%{_keyringpath}/*/*");
+}
+
+rpmRC keystore_openpgp_cert_d::delete_key(rpmtxn txn, rpmPubkey key)
+{
+    rpmRC rc = RPMRC_NOTFOUND;
+    int lock_fd = -1;
+
+    if ((lock_fd = acquire_write_lock(txn)) == -1)
+	return RPMRC_FAIL;
+
+    string fp = rpmPubkeyFingerprintAsHex(key);
+    string dir = fp.substr(0, 2);
+    string filename = fp.substr(2);
+    char * filepath = rpmGetPath(rpmtxnRootDir(txn), "%{_keyringpath}/", dir.c_str(), "/", filename.c_str(), NULL);
+    char * dirpath = rpmGetPath(rpmtxnRootDir(txn), "%{_keyringpath}/", dir.c_str(), NULL);
+
+    if (!access(filepath, F_OK))
+	rc = unlink(filepath) ? RPMRC_FAIL : RPMRC_OK;
+    /* delete directory if empty */
+    rmdir(dirpath);
+
+    free(filepath);
+    free(dirpath);
+    free_write_lock(lock_fd);
+    return rc;
+}
+
+rpmRC keystore_openpgp_cert_d::import_key(rpmtxn txn, rpmPubkey key, int replace, rpmFlags flags)
+{
+    rpmRC rc = RPMRC_NOTFOUND;
+    int lock_fd = -1;
+
+    if ((lock_fd = acquire_write_lock(txn)) == -1)
+	return RPMRC_FAIL;
+
+    string fp = rpmPubkeyFingerprintAsHex(key);
+    string dir = fp.substr(0, 2);
+    string filename = fp.substr(2);
+    char *dirpath = rpmGetPath(rpmtxnRootDir(txn), "%{_keyringpath}/", dir.c_str(), NULL);
+    string dirstr = dirpath;
+
+    rc = write_key_to_disk(key, dirstr, filename, replace, flags);
+
+    free_write_lock(lock_fd);
+    free(dirpath);
+
+    return rc;
+}
+
+/*****************************************************************************/
+
+rpmRC keystore_rpmdb::load_keys(rpmtxn txn, rpmKeyring keyring)
 {
     Header h;
     rpmdbMatchIterator mi;
-    int nkeys = 0;
 
     rpmlog(RPMLOG_DEBUG, "loading keyring from rpmdb\n");
-    mi = rpmtsInitIterator(ts, RPMDBI_NAME, "gpg-pubkey", 0);
+    mi = rpmtsInitIterator(rpmtxnTs(txn), RPMDBI_NAME, "gpg-pubkey", 0);
     while ((h = rpmdbNextIterator(mi)) != NULL) {
 	struct rpmtd_s pubkeys;
 	const char *key;
-
-	if (!headerGet(h, RPMTAG_PUBKEYS, &pubkeys, HEADERGET_MINMEM))
-	   continue;
-
 	char *nevr = headerGetAsString(h, RPMTAG_NEVR);
+
+	/* don't allow normal packages named gpg-pubkey */
+	if (headerIsEntry(h, RPMTAG_ARCH) || headerIsEntry(h, RPMTAG_OS) ||
+	    !headerGet(h, RPMTAG_PUBKEYS, &pubkeys, HEADERGET_MINMEM))
+	{
+	    rpmlog(RPMLOG_WARNING, _("%s is not a valid public key\n"), nevr);
+	    free(nevr);
+	    continue;
+	}
+
 	while ((key = rpmtdNextString(&pubkeys))) {
 	    uint8_t *pkt;
 	    size_t pktlen;
@@ -164,7 +268,6 @@ static int rpmtsLoadKeyringFromDB(rpmts ts, rpmKeyring keyring)
 		if (key) {
 		    if (rpmKeyringAddKey(keyring, key) == 0) {
 			rpmlog(RPMLOG_DEBUG, "Loaded key %s\n", nevr);
-			nkeys++;
 		    }
 		    rpmPubkeyFree(key);
 		}
@@ -176,10 +279,10 @@ static int rpmtsLoadKeyringFromDB(rpmts ts, rpmKeyring keyring)
     }
     rpmdbFreeIterator(mi);
 
-    return nkeys;
+    return RPMRC_OK;
 }
 
-static rpmRC rpmtsDeleteDBKey(rpmtxn txn, const string & keyid, unsigned int newinstance = 0)
+rpmRC keystore_rpmdb::delete_key(rpmtxn txn, const string & keyid, unsigned int newinstance)
 {
     rpmts ts = rpmtxnTs(txn);
     if (rpmtsOpenDB(ts, (O_RDWR|O_CREAT)))
@@ -203,25 +306,32 @@ static rpmRC rpmtsDeleteDBKey(rpmtxn txn, const string & keyid, unsigned int new
     return rc;
 }
 
-static rpmRC rpmtsDeleteDBKey(rpmtxn txn, rpmPubkey key)
+rpmRC keystore_rpmdb::delete_key(rpmtxn txn, rpmPubkey key)
 {
-    return rpmtsDeleteDBKey(txn, rpmPubkeyFingerprintAsHex(key));
+    return delete_key(txn, rpmPubkeyFingerprintAsHex(key));
 }
 
-static rpmRC rpmtsImportDBKey(rpmtxn txn, Header h, rpmFlags flags, int replace)
+rpmRC keystore_rpmdb::import_key(rpmtxn txn, rpmPubkey key, int replace, rpmFlags flags)
 {
-    rpmRC rc = rpmtsImportHeader(txn, h, 0);
+    Header h = NULL;
+    rpmRC rc = RPMRC_FAIL;
+
+    if (makePubkeyHeader(rpmtxnTs(txn), key, &h) != 0)
+	return rc;
+
+    rc = rpmtsImportHeader(txn, h, 0);
 
     if (!rc && replace) {
 	/* find and delete the old pubkey entry */
 	unsigned int newinstance = headerGetInstance(h);
 	char *keyid = headerFormat(h, "%{version}", NULL);
-	if (rpmtsDeleteDBKey(txn, keyid, newinstance) == RPMRC_NOTFOUND) {
+	if (delete_key(txn, keyid, newinstance) == RPMRC_NOTFOUND) {
 	    /* make sure an old, short keyid version gets removed */
-	    rpmtsDeleteDBKey(txn, keyid+32, newinstance);
+	    delete_key(txn, keyid+32, newinstance);
 	}
 	free(keyid);
     }
+    headerFree(h);
 
     return rc;
 }
@@ -358,6 +468,11 @@ static int makePubkeyHeader(rpmts ts, rpmPubkey key, Header * hdrp)
     if (h != NULL) {
 	*hdrp = headerLink(h);
 	rc = 0;
+
+	/* Add install time/tid as icing on the cake */
+	rpm_tid_t tid = rpmtsGetTid(ts);
+	headerPutUint32(h, RPMTAG_INSTALLTIME, &tid, 1);
+	headerPutUint32(h, RPMTAG_INSTALLTID, &tid, 1);
     }
 
 exit:
@@ -369,71 +484,3 @@ exit:
 
     return rc;
 }
-
-rpmRC rpmKeystoreImportPubkey(rpmtxn txn, rpmPubkey key, int replace)
-{
-    rpmRC rc = RPMRC_FAIL;
-    rpmts ts = rpmtxnTs(txn);
-    Header h = NULL;
-
-    if (makePubkeyHeader(ts, key, &h) != 0)
-	return rc;
-
-    rpm_tid_t tid = rpmtsGetTid(ts);
-    headerPutUint32(h, RPMTAG_INSTALLTIME, &tid, 1);
-    headerPutUint32(h, RPMTAG_INSTALLTID, &tid, 1);
-
-    /* Add header to database. */
-    if (!(rpmtsFlags(ts) & RPMTRANS_FLAG_TEST)) {
-	if (ts->keyringtype == KEYRING_FS)
-	    rc = rpmtsImportFSKey(txn, h, 0, replace);
-	else
-	    rc = rpmtsImportDBKey(txn, h, 0, replace);
-    } else {
-	rc = RPMRC_OK;
-    }
-    headerFree(h);
-    return rc;
-}
-
-rpmRC rpmKeystoreDeletePubkey(rpmtxn txn, rpmPubkey key)
-{
-    rpmRC rc = RPMRC_FAIL;
-    rpmts ts = rpmtxnTs(txn);
-    if (ts->keyringtype == KEYRING_FS)
-	rc = rpmtsDeleteFSKey(txn, key);
-    else
-	rc = rpmtsDeleteDBKey(txn, key);
-    return rc;
-}
-
-static int getKeyringType(void)
-{
-    int kt = KEYRING_RPMDB;
-    char *krtype = rpmExpand("%{?_keyring}", NULL);
-
-    if (rstreq(krtype, "fs")) {
-	kt = KEYRING_FS;
-    } else if (*krtype && !rstreq(krtype, "rpmdb")) {
-	/* Fall back to using rpmdb if unknown, for now at least */
-	rpmlog(RPMLOG_WARNING,
-		_("unknown keyring type: %s, using rpmdb\n"), krtype);
-    }
-    free(krtype);
-
-    return kt;
-}
-
-int rpmKeystoreLoad(rpmts ts, rpmKeyring keyring)
-{
-    int nkeys = 0;
-    if (!ts->keyringtype)
-	ts->keyringtype = getKeyringType();
-    if (ts->keyringtype == KEYRING_FS) {
-	nkeys = rpmtsLoadKeyringFromFiles(ts, keyring);
-    } else {
-	nkeys = rpmtsLoadKeyringFromDB(ts, keyring);
-    }
-    return nkeys;
-}
-

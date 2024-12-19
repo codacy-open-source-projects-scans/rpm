@@ -1,12 +1,14 @@
-FROM registry.fedoraproject.org/fedora:40 AS base
+# Supported Fedora releases: 40 41
+FROM registry.fedoraproject.org/fedora:41 AS base
 MAINTAINER rpm-maint@lists.rpm.org
 
 RUN echo -e "deltarpm=0\ninstall_weak_deps=0\ntsflags=nodocs" >> /etc/dnf/dnf.conf
 RUN rpm --quiet -q fedora-repos-modular && rpm -e fedora-repos-modular ||:
 RUN sed -i -e "s:^enabled=.$:enabled=0:g" /etc/yum.repos.d/*openh264.repo
+# updates disabled for a stable environment
+RUN sed -i -e "s:^enabled=.$:enabled=0:g" /etc/yum.repos.d/*updates*.repo
 # dummy for controlling per-repo gpgcheck via Semaphore setup
 RUN sed -i -e "s:^gpgcheck=.$:gpgcheck=1:g" /etc/yum.repos.d/*.repo
-RUN dnf -y update
 RUN dnf -y install \
   autoconf \
   bubblewrap \
@@ -46,14 +48,17 @@ RUN dnf -y install \
   tar unzip gzip bzip2 cpio xz p7zip \
   pkgconfig \
   /usr/bin/systemd-sysusers \
-  "gdb-headless < 15" \
+  gdb-headless \
   dwz \
   fsverity-utils fsverity-utils-devel \
   pandoc \
   sequoia-sq \
   libasan \
-  libubsan \
-  && dnf clean all
+  libubsan
+# If updates to specific packages are needed, do it here
+# RUN dnf --enablerepo=updates update ...
+RUN dnf clean all
+
 RUN echo "%_dbpath $(rpm --eval '%_dbpath')" > /root/.rpmmacros
 
 # Workaround for pkgconf(1)'s unlisted dependency on rpm.
@@ -61,12 +66,21 @@ RUN echo "%_dbpath $(rpm --eval '%_dbpath')" > /root/.rpmmacros
 RUN ln -sf $(rpm --eval '%{_target_platform}%{?_gnu}')-pkg-config \
            /usr/bin/pkg-config
 
-RUN rpm -e --nodeps --nodb \
+# Self-destruct stock rpm
+RUN if which dnf5; then \
+	# Fedora 41+ \
+	rpm -e --nodeps --nodb \
+	    rpm-plugin-ima; \
+    else \
+	# Fedora 40 \
+	rpm -e --nodeps --nodb \
+	    rpm-sign-libs \
+	    python3-rpm; \
+    fi; \
+    rpm -e --nodeps --nodb \
 	rpm \
 	rpm-libs \
-	rpm-build-libs \
-	rpm-sign-libs \
-	python3-rpm
+	rpm-build-libs
 
 WORKDIR /
 CMD /bin/bash
@@ -79,6 +93,7 @@ RUN chmod -R a-w .
 
 WORKDIR /srv/build
 ENV CFLAGS="-Og -g"
+ENV CXXFLAGS="-Og -g"
 RUN cmake \
 	-DENABLE_WERROR=ON \
 	-DENABLE_ASAN=ON \

@@ -264,7 +264,7 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 #	This does NOT generate actual v6 format, the exact format
 #	hasn't been finalized yet.
 #	Which rpm format go generate (4 or 6)
-%_rpmfilever 4
+%_rpmformat 4
 
 #	The directory where sources/patches from a source package will be
 #	installed. This is also where sources/patches are found when building.
@@ -332,10 +332,15 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 #	Default to %_gpg_name for backwards compatibility
 %_openpgp_sign_id %{?_gpg_name}
 
-#	GnuPG signing additionally supports specifying the location of
-#	its configuration files (GNUPGHOME) via %_gpg_path if needed
+#	Optional alternative path for GnuPG configuration, same as setting
+#	GNUPGHOME environment variable or passing --homedir to gpg.
 #
-#%_gpg_path
+#%_gpg_path /some/path
+
+#	Optional alternative path for Sequoia-sq configuration, same as
+#	passing --home to sq.
+#
+#%_sq_path /some/path
 
 #	The port and machine name of an HTTP proxy host (used for FTP/HTTP).
 #
@@ -365,7 +370,7 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 #%packager
 
 #	Compression type and level for source/binary package payloads.
-#		"w9.gzdio"	gzip level 9 (default).
+#		"w9.gzdio"	gzip level 9 (v4 and srpm default)
 #		"w9.bzdio"	bzip2 level 9.
 #		"w6.xzdio"	xz level 6, xz's default.
 #		"w7T16.xzdio"	xz level 7 using 16 threads
@@ -375,10 +380,11 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 #		"w3.zstdio"	zstd level 3, zstd's default
 #		"w19T8.zstdio"	zstd level 19 using 8 threads
 #		"w7T0.zstdio"	zstd level 7 using %{getncpus} threads
+#		"w19.zstdio"	zstd level 19 (v6 default)
 #		"w.ufdio"	uncompressed
 #
 #%_source_payload	w9.gzdio
-#%_binary_payload	w9.gzdio
+%_binary_payload	%[ %_rpmformat >=6 ? "w19.zstdio" : "w9.gzdio" ]
 
 #	Algorithm to use for generating file checksum digests on build.
 #	If not specified or 0, MD5 is used.
@@ -390,6 +396,8 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 #	8	SHA256 (default)
 #	9	SHA384
 #	10	SHA512
+#	12	SHA3-256
+#	14	SHA3-512
 #
 %_source_filedigest_algorithm	8
 %_binary_filedigest_algorithm	8
@@ -614,27 +622,27 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 #==============================================================================
 # ---- OpenPGP signature macros.
 #	Macro(s) to hold the arguments passed to the cmd implementing package
-#	signing.  Expansion result is parsed by popt, so be sure to use
+#	signing. Input path passed as the first argument, output as second.
+#	Expansion result is parsed by popt, so be sure to use
 #	%{shescape} where needed.
 #
 %__gpg			@__GPG@
-%__gpg_sign_cmd			%{shescape:%{__gpg}} \
-	gpg --no-verbose --no-armor --no-secmem-warning \
+%__gpg_sign_cmd()	%{shescape:%{__gpg}} \
+	--no-verbose --no-armor --no-secmem-warning \
+	%{?_gpg_path:--homedir %{shescape:%{_gpg_path}}} \
 	%{?_gpg_digest_algo:--digest-algo=%{_gpg_digest_algo}} \
 	%{?_gpg_sign_cmd_extra_args} \
 	%{?_openpgp_sign_id:-u %{shescape:%{_openpgp_sign_id}}} \
-	-sbo %{shescape:%{?__signature_filename}} \
-	%{?__plaintext_filename:-- %{shescape:%{__plaintext_filename}}}
+	-sbo %{shescape:%{2}} -- %{shescape:%{1}}
 
 %__sq @__SQ@
-%__sq_sign_cmd		%{shescape:%{__sq}} \
-	%{__sq} sign \
+%__sq_sign_cmd()	%{shescape:%{__sq}} \
+	sign \
+	%{?_sq_path:--homedir %{shescape:%{_sq_path}}} \
         %{?_openpgp_sign_id:--signer-key %{_openpgp_sign_id}} \
 	%{?_sq_sign_cmd_extra_args} \
-        --detached --output %{shescape:%{?__signature_filename}} \
-        %{?__plaintext_filename:-- %{shescape:%{__plaintext_filename}}}
+        --binary --detached --output %{shescape:%{2}} -- %{shescape:%{1}}
 
-%__openpgp_sign_path %{expand:%{__%{_openpgp_sign}}}
 %__openpgp_sign_cmd %{expand:%{__%{_openpgp_sign}_sign_cmd}}
 
 #==============================================================================
@@ -825,11 +833,11 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 # ---- Scriptlet templates.
 #	Macro(s) that expand to a command and script that is executed.
 #
-%__spec_builddir_shell	%{nil}
-%__spec_builddir_args	%{nil}
-%__spec_builddir_cmd	%{nil}
+%__spec_builddir_shell	%{___build_shell}
+%__spec_builddir_args	%{___build_args}
+%__spec_builddir_cmd	%{___build_cmd}
 %__spec_builddir_pre	%{nil}
-%__spec_builddir_body   %{%nil}
+%__spec_builddir_body   %{nil}
 %__spec_builddir_post	%{nil}
 %__spec_builddir_template %{nil}
 
@@ -1359,7 +1367,7 @@ end
     name = arg[2]
     if arg[1] == 'g' then
         type = 'group'
-    elseif arg[1] == 'u' then
+    elseif arg[1] == 'u' or arg[1] == 'u!' then
         type = 'user'
     elseif arg[1] == 'm' and #arg >=3 then
         type = 'groupmember'

@@ -19,8 +19,11 @@
 #include <rpm/rpmfileutil.h>
 #include "rpmbuild_internal.hh"
 #include "rpmbuild_misc.hh"
+#include "rpmmacro_internal.hh"
 
 #include "debug.h"
+
+using namespace rpm;
 
 static rpm_time_t getBuildTime(void)
 {
@@ -140,6 +143,7 @@ rpmRC doScript(rpmSpec spec, rpmBuildFlags what, const char *name,
 	mTemplate = "%{__spec_builddir_template}";
 	mPost = "%{__spec_builddir_post}";
 	mCmd = "%{__spec_builddir_cmd}";
+	break;
     case RPMBUILD_PREP:
 	mTemplate = "%{__spec_prep_template}";
 	mPost = "%{__spec_prep_post}";
@@ -321,28 +325,27 @@ static int doCheckBuildRequires(rpmts ts, rpmSpec spec, int test)
 
 static rpmRC doBuildDir(rpmSpec spec, int test, int inPlace, StringBuf *sbp)
 {
-    char *doDir = rpmExpand("test -d '", spec->buildDir, "' && ",
-			   "%{_fixperms} '", spec->buildDir, "'\n",
-			   "%{__rm} -rf '", spec->buildDir, "'\n",
-			   "%{__mkdir_p} '", spec->buildDir, "'\n",
-			   "%{__mkdir_p} '%{specpartsdir}'\n",
-			   NULL);
+    auto [ ign, doDir ] = macros().expand({
+			       "test -d '", spec->buildDir, "' && ",
+			       "%{_fixperms} '", spec->buildDir, "'\n",
+			       "%{__rm} -rf '", spec->buildDir, "'\n",
+			       "%{__mkdir_p} '", spec->buildDir, "'\n",
+			       "%{__mkdir_p} '%{specpartsdir}'\n",
+			   });
 
     if (inPlace) {
 	/* note that pwd needs to be from parse, not build time */
-	char *buf = rpmExpand("%{__ln} -s %(pwd) %{builddir}/%{buildsubdir}", NULL);
-	doDir = rstrcat(&doDir, buf);
-	free(buf);
+	auto [ ign, buf ] = macros().expand("%{__ln} -s %(pwd) %{builddir}/%{buildsubdir}");
+	doDir += buf;
     }
 
     rpmRC rc = doScript(spec, RPMBUILD_MKBUILDDIR, "%mkbuilddir",
-			doDir, test, sbp);
+			doDir.c_str(), test, sbp);
     if (rc) {
 	rpmlog(RPMLOG_ERR,
 		_("failed to create package build directory %s: %s\n"),
 		spec->buildDir, strerror(errno));
     }
-    free(doDir);
     return rc;
 }
 

@@ -2,6 +2,9 @@
 
 #include <mutex>
 #include <shared_mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 #include <fcntl.h>
 #include <stdarg.h>
@@ -48,33 +51,15 @@ using rdlock = std::shared_lock<std::shared_mutex>;
 static const char * defrcfiles = NULL;
 const char * macrofiles = NULL;
 
-typedef struct machCacheEntry_s {
-    char * name;
-    int count;
-    char ** equivs;
-    int visited;
-} * machCacheEntry;
+struct machCacheEntry {
+    std::vector<std::string> equivs {};
+    int visited { 0 };
+};
 
-typedef struct machCache_s {
-    machCacheEntry cache;
-    int size;
-} * machCache;
-
-typedef struct machEquivInfo_s {
-    char * name;
+struct machEquivInfo {
+    std::string name;
     int score;
-} * machEquivInfo;
-
-typedef struct machEquivTable_s {
-    int count;
-    machEquivInfo list;
-} * machEquivTable;
-
-struct rpmvarValue {
-    char * value;
-    /* eventually, this arch will be replaced with a generic condition */
-    char * arch;
-struct rpmvarValue * next;
+    machEquivInfo(std::string name, int score) : name(name), score(score) {};
 };
 
 struct rpmOption {
@@ -90,16 +75,16 @@ static struct rpmat_s {
     uint64_t hwcap;
 } rpmat;
 
-typedef struct defaultEntry_s {
-    char * name;
-    char * defName;
-} * defaultEntry;
+struct canonEntry {
+    std::string short_name;
+    int num;
+    canonEntry(std::string sn, int num) : short_name(sn), num(num) {};
+};
 
-typedef struct canonEntry_s {
-    char * name;
-    char * short_name;
-    short num;
-} * canonEntry;
+using defaultsTable = std::unordered_map<std::string,std::string>;
+using canonsTable = std::unordered_map<std::string,canonEntry>;
+using machEquivTable = std::vector<machEquivInfo>;
+using machCache = std::unordered_map<std::string,machCacheEntry>;
 
 /* tags are 'key'canon, 'key'translate, 'key'compat
  *
@@ -109,22 +94,17 @@ typedef struct tableType_s {
     const char *key;
     const int hasCanon;
     const int hasTranslate;
-    struct machEquivTable_s equiv;
-    struct machCache_s cache;
-    defaultEntry defaults;
-    canonEntry canons;
-    int defaultsLength;
-    int canonsLength;
+    machEquivTable equiv;
+    machCache cache;
+    defaultsTable defaults;
+    canonsTable canons;
 } * tableType;
 
-/* XXX get rid of this stuff... */
-/* Stuff for maintaining "variables" like SOURCEDIR, BUILDDIR, etc */
+/* Stuff for maintaining per arch "variables" like optflags */
 #define RPMVAR_OPTFLAGS                 3
 #define RPMVAR_ARCHCOLOR                42
 #define RPMVAR_INCLUDE                  43
 #define RPMVAR_MACROFILES               49
-
-#define RPMVAR_NUM                      55      /* number of RPMVAR entries */
 
 /* this *must* be kept in alphabetical order */
 /* The order of the flags is archSpecific, macroize, localize */
@@ -146,7 +126,7 @@ struct rpmrcCtx_s {
     ARGV_t platpat;
     char *current[2];
     int currTables[2];
-    struct rpmvarValue values[RPMVAR_NUM];
+    std::unordered_map<int,std::unordered_map<std::string,std::string>> values;
     struct tableType_s tables[RPM_MACHTABLE_COUNT];
     int machDefaults;
     int pathDefaults;
@@ -186,25 +166,23 @@ static int optionCompare(const void * a, const void * b)
 		      ((const struct rpmOption *) b)->name);
 }
 
-static machCacheEntry
-machCacheFindEntry(const machCache cache, const char * key)
+static machCacheEntry *
+machCacheFindEntry(machCache & cache, const std::string & key)
 {
-    int i;
-
-    for (i = 0; i < cache->size; i++)
-	if (rstreq(cache->cache[i].name, key)) return cache->cache + i;
+    auto it = cache.find(key);
+    if (it != cache.end())
+	return &it->second;
 
     return NULL;
 }
 
 static int machCompatCacheAdd(char * name, const char * fn, int linenum,
-				machCache cache)
+				machCache & cache)
 {
-    machCacheEntry entry = NULL;
+    machCacheEntry *entry = NULL;
     char * chptr;
     char * equivs;
     int delEntry = 0;
-    int i;
 
     while (*name && risspace(*name)) name++;
 
@@ -227,23 +205,16 @@ static int machCompatCacheAdd(char * name, const char * fn, int linenum,
 	delEntry = 1;
     }
 
-    if (cache->size) {
+    if (cache.empty() == false) {
 	entry = machCacheFindEntry(cache, name);
 	if (entry) {
-	    for (i = 0; i < entry->count; i++)
-		entry->equivs[i] = _free(entry->equivs[i]);
-	    entry->equivs = _free(entry->equivs);
-	    entry->count = 0;
+	    entry->equivs.clear();
 	}
     }
 
     if (!entry) {
-	cache->cache = xrealloc(cache->cache,
-			       (cache->size + 1) * sizeof(*cache->cache));
-	entry = cache->cache + cache->size++;
-	entry->name = xstrdup(name);
-	entry->count = 0;
-	entry->visited = 0;
+	auto ret = cache.try_emplace(name);
+	entry = &ret.first->second;
     }
 
     if (delEntry) return 0;
@@ -252,112 +223,74 @@ static int machCompatCacheAdd(char * name, const char * fn, int linenum,
 	equivs = NULL;
 	if (chptr[0] == '\0')	/* does strtok() return "" ever?? */
 	    continue;
-	if (entry->count)
-	    entry->equivs = xrealloc(entry->equivs, sizeof(*entry->equivs)
-					* (entry->count + 1));
-	else
-	    entry->equivs = (char **)xmalloc(sizeof(*entry->equivs));
-
-	entry->equivs[entry->count] = xstrdup(chptr);
-	entry->count++;
+	entry->equivs.emplace_back(chptr);
     }
 
     return 0;
 }
 
-static machEquivInfo
-machEquivSearch(const machEquivTable table, const char * name)
+static const machEquivInfo *
+machEquivSearch(const machEquivTable & table, const std::string & name)
 {
-    int i;
-
-    for (i = 0; i < table->count; i++)
-	if (!rstrcasecmp(table->list[i].name, name))
-	    return table->list + i;
+    for (size_t i = 0; i < table.size(); i++)
+	if (!rstrcasecmp(table[i].name.c_str(), name.c_str()))
+	    return &table[i];
 
     return NULL;
 }
 
-static void machAddEquiv(machEquivTable table, const char * name,
+static void machAddEquiv(machEquivTable & table, const std::string & name,
 			   int distance)
 {
-    machEquivInfo equiv;
-
-    equiv = machEquivSearch(table, name);
+    const machEquivInfo * equiv = machEquivSearch(table, name);
     if (!equiv) {
-	if (table->count)
-	    table->list = xrealloc(table->list, (table->count + 1)
-				    * sizeof(*table->list));
-	else
-	    table->list = (machEquivInfo)xmalloc(sizeof(*table->list));
-
-	table->list[table->count].name = xstrdup(name);
-	table->list[table->count++].score = distance;
+	table.emplace_back(name, distance);
     }
 }
 
 static void machCacheEntryVisit(machCache cache,
-		machEquivTable table, const char * name, int distance)
+		machEquivTable & table, const std::string & name, int distance)
 {
-    machCacheEntry entry;
-    int i;
+    machCacheEntry *entry = machCacheFindEntry(cache, name);
 
-    entry = machCacheFindEntry(cache, name);
     if (!entry || entry->visited) return;
 
     entry->visited = 1;
 
-    for (i = 0; i < entry->count; i++) {
-	machAddEquiv(table, entry->equivs[i], distance);
+    for (auto const & e: entry->equivs) {
+	machAddEquiv(table, e, distance);
     }
 
-    for (i = 0; i < entry->count; i++) {
-	machCacheEntryVisit(cache, table, entry->equivs[i], distance + 1);
+    for (auto const & e: entry->equivs) {
+	machCacheEntryVisit(cache, table, e, distance + 1);
     }
 }
 
-static void machFindEquivs(machCache cache, machEquivTable table,
+static void machFindEquivs(machCache & cache, machEquivTable & table,
 		const char * key)
 {
-    int i;
+    for (auto & [k, e] : cache)
+	e.visited = 0;
 
-    for (i = 0; i < cache->size; i++)
-	cache->cache[i].visited = 0;
-
-    while (table->count > 0) {
-	--table->count;
-	table->list[table->count].name = _free(table->list[table->count].name);
-    }
-    table->count = 0;
-    table->list = _free(table->list);
+    table.clear();
 
     /*
      *	We have a general graph built using strings instead of pointers.
      *	Yuck. We have to start at a point at traverse it, remembering how
      *	far away everything is.
      */
-   	/* FIX: table->list may be NULL. */
     machAddEquiv(table, key, 1);
     machCacheEntryVisit(cache, table, key, 2);
     return;
 }
 
-static rpmRC addCanon(canonEntry * table, int * tableLen, char * line,
-		    const char * fn, int lineNum)
+static rpmRC addCanon(canonsTable & table,
+		    char * line, const char * fn, int lineNum)
 {
-    canonEntry t;
-    char *s, *s1;
-    const char * tname;
-    const char * tshort_name;
-    int tnum;
+    const char *tname = strtok(line, ": \t");
+    const char *tshort_name = strtok(NULL, " \t");
+    char *s = strtok(NULL, " \t");
 
-    (*tableLen) += 2;
-    *table = xrealloc(*table, sizeof(**table) * (*tableLen));
-
-    t = & ((*table)[*tableLen - 2]);
-
-    tname = strtok(line, ": \t");
-    tshort_name = strtok(NULL, " \t");
-    s = strtok(NULL, " \t");
     if (! (tname && tshort_name && s)) {
 	rpmlog(RPMLOG_ERR, _("Incomplete data line at %s:%d\n"),
 		fn, lineNum);
@@ -369,39 +302,26 @@ static rpmRC addCanon(canonEntry * table, int * tableLen, char * line,
 	return RPMRC_FAIL;
     }
 
-    tnum = strtoul(s, &s1, 10);
+    char *s1 = NULL;
+    int tnum = strtoul(s, &s1, 10);
     if ((*s1) || (s1 == s) || (tnum == ULONG_MAX)) {
 	rpmlog(RPMLOG_ERR, _("Bad arch/os number: %s (%s:%d)\n"), s,
 	      fn, lineNum);
 	return RPMRC_FAIL;
     }
 
-    t[0].name = xstrdup(tname);
-    t[0].short_name = (tshort_name ? xstrdup(tshort_name) : xstrdup(""));
-    t[0].num = tnum;
-
-    /* From A B C entry */
-    /* Add  B B C entry */
-    t[1].name = (tshort_name ? xstrdup(tshort_name) : xstrdup(""));
-    t[1].short_name = (tshort_name ? xstrdup(tshort_name) : xstrdup(""));
-    t[1].num = tnum;
+    table.try_emplace(tname, tshort_name, tnum);
+    table.try_emplace(tshort_name, tshort_name, tnum);
 
     return RPMRC_OK;
 }
 
-static rpmRC addDefault(defaultEntry * table, int * tableLen, char * line,
+static rpmRC addDefault(defaultsTable & table, char * line,
 			const char * fn, int lineNum)
 {
-    defaultEntry t;
-
-    (*tableLen)++;
-    *table = xrealloc(*table, sizeof(**table) * (*tableLen));
-
-    t = & ((*table)[*tableLen - 1]);
-
-    t->name = strtok(line, ": \t");
-    t->defName = strtok(NULL, " \t");
-    if (! (t->name && t->defName)) {
+    const char *name = strtok(line, ": \t");
+    const char *defName = strtok(NULL, " \t");
+    if (! (name && defName)) {
 	rpmlog(RPMLOG_ERR, _("Incomplete default line at %s:%d\n"),
 		 fn, lineNum);
 	return RPMRC_FAIL;
@@ -412,34 +332,28 @@ static rpmRC addDefault(defaultEntry * table, int * tableLen, char * line,
 	return RPMRC_FAIL;
     }
 
-    t->name = xstrdup(t->name);
-    t->defName = (t->defName ? xstrdup(t->defName) : NULL);
+    table.insert({name, defName});
 
     return RPMRC_OK;
 }
 
-static canonEntry lookupInCanonTable(const char * name,
-		const canonEntry table, int tableLen)
+static const canonEntry * lookupInCanonTable(const char * name,
+		const canonsTable & table)
 {
-    while (tableLen) {
-	tableLen--;
-	if (!rstreq(name, table[tableLen].name))
-	    continue;
-	return &(table[tableLen]);
-    }
+    auto it = table.find(name);
+    if (it != table.end())
+	return &it->second;
 
     return NULL;
 }
 
 static
 const char * lookupInDefaultTable(const char * name,
-		const defaultEntry table, int tableLen)
+		const defaultsTable & table)
 {
-    while (tableLen) {
-	tableLen--;
-	if (table[tableLen].name && rstreq(name, table[tableLen].name))
-	    return table[tableLen].defName;
-    }
+    auto it = table.find(name);
+    if (it != table.end())
+	return it->second.c_str();
 
     return name;
 }
@@ -627,20 +541,17 @@ static rpmRC doReadRC(rpmrcCtx ctx, const char * urlfn)
 
 		if (rstreq(rest, "compat")) {
 		    if (machCompatCacheAdd(se, fn, linenum,
-						&ctx->tables[i].cache))
+						ctx->tables[i].cache))
 			goto exit;
 		    gotit = 1;
 		} else if (ctx->tables[i].hasTranslate &&
 			   rstreq(rest, "translate")) {
-		    if (addDefault(&ctx->tables[i].defaults,
-				   &ctx->tables[i].defaultsLength,
-				   se, fn, linenum))
+		    if (addDefault(ctx->tables[i].defaults, se, fn, linenum))
 			goto exit;
 		    gotit = 1;
 		} else if (ctx->tables[i].hasCanon &&
 			   rstreq(rest, "canon")) {
-		    if (addCanon(&ctx->tables[i].canons,
-				 &ctx->tables[i].canonsLength,
+		    if (addCanon(ctx->tables[i].canons,
 				 se, fn, linenum))
 			goto exit;
 		    gotit = 1;
@@ -1138,7 +1049,6 @@ static void defaultMachine(rpmrcCtx ctx, const char ** arch, const char ** os)
     const char * const platform_path = SYSCONFDIR "/rpm/platform";
     static struct utsname un;
     char * chptr;
-    canonEntry canon;
     int rc;
 
 #if defined(__linux__)
@@ -1438,17 +1348,15 @@ static void defaultMachine(rpmrcCtx ctx, const char ** arch, const char ** os)
 #endif
 
 	/* the uname() result goes through the arch_canon table */
-	canon = lookupInCanonTable(un.machine,
-			   ctx->tables[RPM_MACHTABLE_INSTARCH].canons,
-			   ctx->tables[RPM_MACHTABLE_INSTARCH].canonsLength);
+	const canonEntry * canon = lookupInCanonTable(un.machine,
+			   ctx->tables[RPM_MACHTABLE_INSTARCH].canons);
 	if (canon)
-	    rstrlcpy(un.machine, canon->short_name, sizeof(un.machine));
+	    rstrlcpy(un.machine, canon->short_name.c_str(), sizeof(un.machine));
 
 	canon = lookupInCanonTable(un.sysname,
-			   ctx->tables[RPM_MACHTABLE_INSTOS].canons,
-			   ctx->tables[RPM_MACHTABLE_INSTOS].canonsLength);
+			   ctx->tables[RPM_MACHTABLE_INSTOS].canons);
 	if (canon)
-	    rstrlcpy(un.sysname, canon->short_name, sizeof(un.sysname));
+	    rstrlcpy(un.sysname, canon->short_name.c_str(), sizeof(un.sysname));
 	ctx->machDefaults = 1;
 	break;
     }
@@ -1460,57 +1368,22 @@ static void defaultMachine(rpmrcCtx ctx, const char ** arch, const char ** os)
 static
 const char * rpmGetVarArch(rpmrcCtx ctx, int var, const char * arch)
 {
-    const struct rpmvarValue * next;
-
     if (arch == NULL) arch = ctx->current[ARCH];
 
-    if (arch) {
-	next = &ctx->values[var];
-	while (next) {
-	    if (next->arch && rstreq(next->arch, arch)) return next->value;
-	    next = next->next;
+    auto vit = ctx->values.find(var);
+    if (vit != ctx->values.end()) {
+	auto ait = vit->second.find(arch);
+	if (ait != vit->second.end()) {
+	    return ait->second.c_str();
 	}
     }
-
-    next = ctx->values + var;
-    while (next && next->arch) next = next->next;
-
-    return next ? next->value : NULL;
+    return NULL;
 }
 
 static void rpmSetVarArch(rpmrcCtx ctx,
 			  int var, const char * val, const char * arch)
 {
-    struct rpmvarValue * next = ctx->values + var;
-
-    if (next->value) {
-	if (arch) {
-	    while (next->next) {
-		if (next->arch && rstreq(next->arch, arch)) break;
-		next = next->next;
-	    }
-	} else {
-	    while (next->next) {
-		if (!next->arch) break;
-		next = next->next;
-	    }
-	}
-
-	if (next->arch && arch && rstreq(next->arch, arch)) {
-	    next->value = _free(next->value);
-	    next->arch = _free(next->arch);
-	} else if (next->arch || arch) {
-	    next->next = (struct rpmvarValue *)xmalloc(sizeof(*next->next));
-	    next = next->next;
-	    next->value = NULL;
-	    next->arch = NULL;
-	    next->next = NULL;
-	}
-    }
-
-    next->value = _free(next->value);
-    next->value = xstrdup(val);
-    next->arch = (arch ? xstrdup(arch) : NULL);
+    ctx->values[var][arch] = val;
 }
 
 static void rpmSetTables(rpmrcCtx ctx, int archTable, int osTable)
@@ -1552,8 +1425,7 @@ static void rpmSetMachine(rpmrcCtx ctx, const char * arch, const char * os)
 	arch = host_cpu;
 	if (ctx->tables[ctx->currTables[ARCH]].hasTranslate)
 	    arch = lookupInDefaultTable(arch,
-			    ctx->tables[ctx->currTables[ARCH]].defaults,
-			    ctx->tables[ctx->currTables[ARCH]].defaultsLength);
+			    ctx->tables[ctx->currTables[ARCH]].defaults);
     }
     if (arch == NULL) return;	/* XXX can't happen */
 
@@ -1561,8 +1433,7 @@ static void rpmSetMachine(rpmrcCtx ctx, const char * arch, const char * os)
 	os = host_os;
 	if (ctx->tables[ctx->currTables[OS]].hasTranslate)
 	    os = lookupInDefaultTable(os,
-			    ctx->tables[ctx->currTables[OS]].defaults,
-			    ctx->tables[ctx->currTables[OS]].defaultsLength);
+			    ctx->tables[ctx->currTables[OS]].defaults);
     }
     if (os == NULL) return;	/* XXX can't happen */
 
@@ -1593,27 +1464,25 @@ static void rpmSetMachine(rpmrcCtx ctx, const char * arch, const char * os)
 
 static void rebuildCompatTables(rpmrcCtx ctx, int type, const char * name)
 {
-    machFindEquivs(&ctx->tables[ctx->currTables[type]].cache,
-		   &ctx->tables[ctx->currTables[type]].equiv,
+    machFindEquivs(ctx->tables[ctx->currTables[type]].cache,
+		   ctx->tables[ctx->currTables[type]].equiv,
 		   name);
 }
 
 static void getMachineInfo(rpmrcCtx ctx,
 			   int type, const char ** name, int * num)
 {
-    canonEntry canon;
     int which = ctx->currTables[type];
 
     /* use the normal canon tables, even if we're looking up build stuff */
     if (which >= 2) which -= 2;
 
-    canon = lookupInCanonTable(ctx->current[type],
-			       ctx->tables[which].canons,
-			       ctx->tables[which].canonsLength);
+    const canonEntry * canon = lookupInCanonTable(ctx->current[type],
+			       ctx->tables[which].canons);
 
     if (canon) {
 	if (num) *num = canon->num;
-	if (name) *name = canon->short_name;
+	if (name) *name = canon->short_name.c_str();
     } else {
 	if (num) *num = 255;
 	if (name) *name = ctx->current[type];
@@ -1825,64 +1694,20 @@ void rpmFreeRpmrc(void)
 {
     rpmrcCtx ctx = rpmrcCtxAcquire();
     wrlock lock(ctx->mutex);
-    int i, j, k;
+    int i;
 
     ctx->platpat = argvFree(ctx->platpat);
 
     for (i = 0; i < RPM_MACHTABLE_COUNT; i++) {
 	tableType t;
 	t = ctx->tables + i;
-	if (t->equiv.list) {
-	    for (j = 0; j < t->equiv.count; j++)
-		t->equiv.list[j].name = _free(t->equiv.list[j].name);
-	    t->equiv.list = _free(t->equiv.list);
-	    t->equiv.count = 0;
-	}
-	if (t->cache.cache) {
-	    for (j = 0; j < t->cache.size; j++) {
-		machCacheEntry e;
-		e = t->cache.cache + j;
-		if (e == NULL)
-		    continue;
-		e->name = _free(e->name);
-		if (e->equivs) {
-		    for (k = 0; k < e->count; k++)
-			e->equivs[k] = _free(e->equivs[k]);
-		    e->equivs = _free(e->equivs);
-		}
-	    }
-	    t->cache.cache = _free(t->cache.cache);
-	    t->cache.size = 0;
-	}
-	if (t->defaults) {
-	    for (j = 0; j < t->defaultsLength; j++) {
-		t->defaults[j].name = _free(t->defaults[j].name);
-		t->defaults[j].defName = _free(t->defaults[j].defName);
-	    }
-	    t->defaults = _free(t->defaults);
-	    t->defaultsLength = 0;
-	}
-	if (t->canons) {
-	    for (j = 0; j < t->canonsLength; j++) {
-		t->canons[j].name = _free(t->canons[j].name);
-		t->canons[j].short_name = _free(t->canons[j].short_name);
-	    }
-	    t->canons = _free(t->canons);
-	    t->canonsLength = 0;
-	}
+	t->equiv.clear();
+	t->cache.clear();
+	t->defaults.clear();
+	t->canons.clear();
     }
 
-    for (i = 0; i < RPMVAR_NUM; i++) {
-	struct rpmvarValue * vp;
-	while ((vp = ctx->values[i].next) != NULL) {
-	    ctx->values[i].next = vp->next;
-	    vp->value = _free(vp->value);
-	    vp->arch = _free(vp->arch);
-	    vp = _free(vp);
-	}
-	ctx->values[i].value = _free(ctx->values[i].value);
-	ctx->values[i].arch = _free(ctx->values[i].arch);
-    }
+    ctx->values.clear();
     ctx->current[OS] = _free(ctx->current[OS]);
     ctx->current[ARCH] = _free(ctx->current[ARCH]);
     ctx->machDefaults = 0;
@@ -1897,6 +1722,14 @@ void rpmFreeRpmrc(void)
     return;
 }
 
+static void printEquivs(FILE *fp, const char *title, const machEquivTable & table)
+{
+    fprintf(fp, "%s", title);
+    for (auto const & e : table)
+	fprintf(fp," %s", e.name.c_str());
+    fprintf(fp, "\n");
+}
+
 int rpmShowRC(FILE * fp)
 {
     rpmrcCtx ctx = rpmrcCtxAcquire();
@@ -1905,25 +1738,18 @@ int rpmShowRC(FILE * fp)
     const struct rpmOption *opt;
     rpmds ds = NULL;
     int i;
-    machEquivTable equivTable;
 
     /* the caller may set the build arch which should be printed here */
     fprintf(fp, "ARCHITECTURE AND OS:\n");
     fprintf(fp, "build arch            : %s\n", ctx->current[ARCH]);
 
-    fprintf(fp, "compatible build archs:");
-    equivTable = &ctx->tables[RPM_MACHTABLE_BUILDARCH].equiv;
-    for (i = 0; i < equivTable->count; i++)
-	fprintf(fp," %s", equivTable->list[i].name);
-    fprintf(fp, "\n");
+    printEquivs(fp, "compatible build archs:",
+		ctx->tables[RPM_MACHTABLE_BUILDARCH].equiv);
 
     fprintf(fp, "build os              : %s\n", ctx->current[OS]);
 
-    fprintf(fp, "compatible build os's :");
-    equivTable = &ctx->tables[RPM_MACHTABLE_BUILDOS].equiv;
-    for (i = 0; i < equivTable->count; i++)
-	fprintf(fp," %s", equivTable->list[i].name);
-    fprintf(fp, "\n");
+    printEquivs(fp, "compatible build os's :",
+		ctx->tables[RPM_MACHTABLE_BUILDOS].equiv);
 
     rpmSetTables(ctx, RPM_MACHTABLE_INSTARCH, RPM_MACHTABLE_INSTOS);
     rpmSetMachine(ctx, NULL, NULL);	/* XXX WTFO? Why bother? */
@@ -1931,17 +1757,11 @@ int rpmShowRC(FILE * fp)
     fprintf(fp, "install arch          : %s\n", ctx->current[ARCH]);
     fprintf(fp, "install os            : %s\n", ctx->current[OS]);
 
-    fprintf(fp, "compatible archs      :");
-    equivTable = &ctx->tables[RPM_MACHTABLE_INSTARCH].equiv;
-    for (i = 0; i < equivTable->count; i++)
-	fprintf(fp," %s", equivTable->list[i].name);
-    fprintf(fp, "\n");
+    printEquivs(fp, "compatible archs      :",
+		ctx->tables[RPM_MACHTABLE_INSTARCH].equiv);
 
-    fprintf(fp, "compatible os's       :");
-    equivTable = &ctx->tables[RPM_MACHTABLE_INSTOS].equiv;
-    for (i = 0; i < equivTable->count; i++)
-	fprintf(fp," %s", equivTable->list[i].name);
-    fprintf(fp, "\n");
+    printEquivs(fp, "compatible os's       :",
+		ctx->tables[RPM_MACHTABLE_INSTOS].equiv);
 
     dbShowRC(fp);
 
@@ -1978,7 +1798,7 @@ int rpmMachineScore(int type, const char * name)
     if (name) {
 	rpmrcCtx ctx = rpmrcCtxAcquire();
 	rdlock lock(ctx->mutex);
-	machEquivInfo info = machEquivSearch(&ctx->tables[type].equiv, name);
+	const machEquivInfo *info = machEquivSearch(ctx->tables[type].equiv, name);
 	if (info)
 	    score = info->score;
     }
@@ -1989,9 +1809,8 @@ int rpmIsKnownArch(const char *name)
 {
     rpmrcCtx ctx = rpmrcCtxAcquire();
     rdlock lock(ctx->mutex);
-    canonEntry canon = lookupInCanonTable(name,
-			    ctx->tables[RPM_MACHTABLE_INSTARCH].canons,
-			    ctx->tables[RPM_MACHTABLE_INSTARCH].canonsLength);
+    const canonEntry *canon = lookupInCanonTable(name,
+			    ctx->tables[RPM_MACHTABLE_INSTARCH].canons);
     int known = (canon != NULL || rstreq(name, "noarch"));
     return known;
 }
@@ -2012,8 +1831,7 @@ int rpmGetArchColor(const char *arch)
     int color_i = -1; /* assume failure */
 
     arch = lookupInDefaultTable(arch,
-			    ctx->tables[ctx->currTables[ARCH]].defaults,
-			    ctx->tables[ctx->currTables[ARCH]].defaultsLength);
+			    ctx->tables[ctx->currTables[ARCH]].defaults);
     color = rpmGetVarArch(ctx, RPMVAR_ARCHCOLOR, arch);
     if (color) {
 	color_i = strtol(color, &e, 10);

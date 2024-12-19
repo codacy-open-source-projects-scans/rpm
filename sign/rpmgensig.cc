@@ -17,6 +17,7 @@
 #include "rpmsignfiles.hh"
 #endif
 
+#include <rpm/rpmbase64.h>
 #include <rpm/rpmlib.h>			/* RPMSIGTAG & related */
 #include <rpm/rpmmacro.h>
 #include <rpm/rpmpgp.h>
@@ -28,6 +29,7 @@
 
 #include "rpmlead.hh"
 #include "signature.hh"
+#include "rpmmacro_internal.hh"
 #include "rpmvs.hh"
 
 #include "debug.h"
@@ -129,13 +131,8 @@ exit:
     return rc;
 }
 
-/*
- * Validate generated signature and insert to header if it looks sane.
- * RPM doesn't support everything GPG does. Basic tests to see if the
- * generated signature is something we can use.
- * Return generated signature tag data on success, NULL on failure.
- */
-static rpmtd makeSigTag(Header sigh, int ishdr, uint8_t *pkt, size_t pktlen)
+/* Wrap a raw signature in an rpmtd and sanity check, return NULL on fail */
+static rpmtd makeSigTag(int ishdr, uint8_t *pkt, size_t pktlen)
 {
     pgpDigParams sigp = NULL;
     rpmTagVal sigtag;
@@ -180,11 +177,12 @@ static rpmtd makeSigTag(Header sigh, int ishdr, uint8_t *pkt, size_t pktlen)
 
     /* Looks sane, create the tag data */
     sigtd = rpmtdNew();
-    sigtd->count = pktlen;
-    sigtd->data = memcpy(xmalloc(pktlen), pkt, pktlen);;
-    sigtd->type = RPM_BIN_TYPE;
     sigtd->tag = sigtag;
     sigtd->flags |= RPMTD_ALLOCED;
+    sigtd->count = pktlen;
+    sigtd->data = memcpy(xmalloc(pktlen), pkt, pktlen);;
+    sigtd->tag = sigtag;
+    sigtd->type = RPM_BIN_TYPE;
 
 exit:
     pgpDigParamsFree(sigp);
@@ -195,21 +193,21 @@ static char ** signCmd(const char *sigfile)
 {
     int argc = 0;
     char **argv = NULL;
+    auto mctx = rpm::macros();
+    auto [ ign, name ] = mctx.expand({"__", "%{_openpgp_sign}", "_sign_cmd"});
+    const char * const margs[] = { "-", sigfile, NULL };
 
-    rpmPushMacro(NULL, "__plaintext_filename", NULL, "-", -1);
-    rpmPushMacro(NULL, "__signature_filename", NULL, sigfile, -1);
-
-    char *cmd = rpmExpand("%{?__openpgp_sign_cmd}", NULL);
-
-    rpmPopMacro(NULL, "__plaintext_filename");
-    rpmPopMacro(NULL, "__signature_filename");
-
-    if (poptParseArgvString(cmd, &argc, (const char ***)&argv) < 0 || argc < 2) {
-	rpmlog(RPMLOG_ERR, _("Invalid sign command: %s\n"), cmd);
-	argv = _free(argv);
+    auto [ rc, cmd ] = mctx.expand_this(name, (ARGV_const_t)margs, 0);
+    if (rc) {
+	rpmlog(RPMLOG_ERR, _("Expanding signing macro %s failed\n"),
+		name.c_str());
+	return NULL;
     }
 
-    free(cmd);
+    if (poptParseArgvString(cmd.c_str(), &argc, (const char ***)&argv) < 0 || argc < 2) {
+	rpmlog(RPMLOG_ERR, _("Invalid sign command: %s\n"), cmd.c_str());
+	argv = _free(argv);
+    }
 
     return argv;
 }
@@ -240,21 +238,16 @@ static int runGPG(sigTarget sigt, const char *sigfile)
 	int using_gpg = (strstr(out, "GnuPG") != NULL);
 	if (using_gpg) {
 	    const char *tty = ttyname(STDIN_FILENO);
-	    const char *gpg_path = NULL;
 
 	    if (!getenv("GPG_TTY") && (!tty || setenv("GPG_TTY", tty, 0)))
 		rpmlog(RPMLOG_WARNING, _("Could not set GPG_TTY to stdin: %m\n"));
-
-	    gpg_path = rpmExpand("%{?_gpg_path}", NULL);
-	    if (gpg_path && *gpg_path != '\0')
-		(void) setenv("GNUPGHOME", gpg_path, 1);
 	}
 	free(out);
 
 	dup2(pipefd[0], STDIN_FILENO);
 	close(pipefd[1]);
 
-	rc = execve(argv[0], argv+1, environ);
+	rc = execve(argv[0], argv, environ);
 
 	rpmlog(RPMLOG_ERR, _("Could not exec %s: %s\n"), argv[0],
 		strerror(errno));
@@ -319,15 +312,8 @@ exit_nowait:
     return rc;
 }
 
-/**
- * Generate GPG signature(s) for a header+payload file.
- * @param sigh		signature header
- * @param ishdr		header-only signature?
- * @param sigt		signature target
- * @param passPhrase	private key pass phrase
- * @return		generated sigtag on success, 0 on failure
- */
-static rpmtd makeGPGSignature(Header sigh, int ishdr, sigTarget sigt)
+/* Generate an OpenPGP signature(s) for a target */
+static rpmtd makeGPGSignature(int ishdr, sigTarget sigt)
 {
     char * sigfile = rstrscat(NULL, sigt->fileName, ".sig", NULL);
     struct stat st;
@@ -340,7 +326,7 @@ static rpmtd makeGPGSignature(Header sigh, int ishdr, sigTarget sigt)
 
     if (stat(sigfile, &st)) {
 	/* External command failed to write signature */
-	rpmlog(RPMLOG_ERR, _("failed to write signature\n"));
+	rpmlog(RPMLOG_ERR, _("failed to write signature: %s\n"), sigfile);
 	goto exit;
     }
 
@@ -357,7 +343,8 @@ static rpmtd makeGPGSignature(Header sigh, int ishdr, sigTarget sigt)
 	    (void) Fclose(fd);
 	}
 	if (rc != pktlen) {
-	    rpmlog(RPMLOG_ERR, _("unable to read the signature\n"));
+	    rpmlog(RPMLOG_ERR, _("unable to read the signature: %s\n"),
+			sigfile);
 	    goto exit;
 	}
     }
@@ -365,7 +352,7 @@ static rpmtd makeGPGSignature(Header sigh, int ishdr, sigTarget sigt)
     rpmlog(RPMLOG_DEBUG, "Got %zd bytes of OpenPGP sig\n", pktlen);
 
     /* Parse the signature, change signature tag as appropriate. */
-    sigtd = makeSigTag(sigh, ishdr, pkt, pktlen);
+    sigtd = makeSigTag(ishdr, pkt, pktlen);
 exit:
     (void) unlink(sigfile);
     free(sigfile);
@@ -381,6 +368,7 @@ static void deleteSigs(Header sigh)
     headerDel(sigh, RPMSIGTAG_DSA);
     headerDel(sigh, RPMSIGTAG_RSA);
     headerDel(sigh, RPMSIGTAG_PGP5);
+    headerDel(sigh, RPMSIGTAG_OPENPGP);
 }
 
 static void deleteFileSigs(Header sigh)
@@ -391,36 +379,84 @@ static void deleteFileSigs(Header sigh)
     headerDel(sigh, RPMSIGTAG_VERITYSIGNATUREALGO);
 }
 
-static int haveSignature(rpmtd sigtd, Header h)
+static pgpDigParams tdParams(rpmtd td)
 {
-    pgpDigParams sig1 = NULL;
-    pgpDigParams sig2 = NULL;
+    pgpDigParams sig = NULL;
+    if (td->tag == RPMTAG_OPENPGP) {
+	uint8_t *pkt = NULL;
+	size_t pktlen = 0;
+	if (rpmBase64Decode(rpmtdGetString(td), (void **)&pkt, &pktlen) == 0) {
+	    pgpPrtParams(pkt, pktlen, PGPTAG_SIGNATURE, &sig);
+	    free(pkt);
+	}
+    } else {
+	pgpPrtParams((uint8_t *)td->data, td->count, PGPTAG_SIGNATURE, &sig);
+    }
+    return sig;
+}
+
+static int haveSignature(rpmtd sigtd, Header sigh)
+{
     struct rpmtd_s oldtd;
     int rc = 0; /* assume no */
+    rpmTagVal tag = headerIsEntry(sigh, RPMSIGTAG_RESERVED) ?
+			RPMTAG_OPENPGP : sigtd->tag;
 
-    if (!headerGet(h, rpmtdTag(sigtd), &oldtd, HEADERGET_DEFAULT))
+    if (!headerGet(sigh, tag, &oldtd, HEADERGET_DEFAULT))
 	return rc;
 
-    pgpPrtParams((uint8_t *)sigtd->data, sigtd->count, PGPTAG_SIGNATURE, &sig1);
+    pgpDigParams newsig = tdParams(sigtd);
     while (rpmtdNext(&oldtd) >= 0 && rc == 0) {
-	pgpPrtParams((uint8_t *)oldtd.data, oldtd.count, PGPTAG_SIGNATURE, &sig2);
-	if (pgpDigParamsCmp(sig1, sig2) == 0)
+	pgpDigParams oldsig = tdParams(&oldtd);
+	if (pgpDigParamsCmp(newsig, oldsig) == 0)
 	    rc = 1;
-	sig2 = pgpDigParamsFree(sig2);
+	pgpDigParamsFree(oldsig);
     }
-    pgpDigParamsFree(sig1);
+    pgpDigParamsFree(newsig);
     rpmtdFreeData(&oldtd);
 
     return rc;
 }
 
-static int replaceSignature(Header sigh, sigTarget sigt_v3, sigTarget sigt_v4)
+static int putSignature(Header sigh, rpmtd sigtd, int multisig)
+{
+    int rc = 1;
+    if (multisig) {
+	char *b64 = rpmBase64Encode(sigtd->data, sigtd->count, 0);
+	char **arr = (char **)xmalloc(1 * sizeof(*arr));
+	arr[0] = b64;
+
+	rpmtd_s mtd = {
+	    .tag = RPMSIGTAG_OPENPGP,
+	    .type = RPM_STRING_ARRAY_TYPE,
+	    .count = 1,
+	    .data = arr,
+	    .flags = RPMTD_ALLOCED|RPMTD_PTR_ALLOCED,
+	    .ix = -1,
+	    .size = 0,
+	};
+	rc = (headerPut(sigh, &mtd, HEADERPUT_APPEND) == 0);
+	rpmtdFreeData(&mtd);
+    } else {
+	rc = (headerPut(sigh, sigtd, HEADERPUT_DEFAULT) == 0);
+    }
+    return rc;
+}
+
+static int haveLegacySig(Header sigh)
+{
+    return headerIsEntry(sigh, RPMSIGTAG_RSA) ||
+	   headerIsEntry(sigh, RPMSIGTAG_DSA);
+}
+
+static int addSignature(Header sigh, rpmSignFlags flags,
+			sigTarget sigt_v3, sigTarget sigt_v4)
 {
     int rc = -1;
     rpmtd sigtd = NULL;
     
-    /* Make the cheaper v4 signature first */
-    if ((sigtd = makeGPGSignature(sigh, 1, sigt_v4)) == NULL)
+    /* Make a header signature */
+    if ((sigtd = makeGPGSignature(1, sigt_v4)) == NULL)
 	goto exit;
 
     /* See if we already have a signature by the same key and parameters */
@@ -428,22 +464,30 @@ static int replaceSignature(Header sigh, sigTarget sigt_v3, sigTarget sigt_v4)
 	rc = 1;
 	goto exit;
     }
-    /* Nuke all signature tags */
-    deleteSigs(sigh);
 
-    if (headerPut(sigh, sigtd, HEADERPUT_DEFAULT) == 0)
-	goto exit;
-
-    if (sigt_v3) {
-	rpmtdFree(sigtd);
-
-	/* Assume the same signature test holds for v3 signature too */
-	if ((sigtd = makeGPGSignature(sigh, 0, sigt_v3)) == NULL)
+    /* Add a v6 signature if requested */
+    if (flags & RPMSIGN_FLAG_RPMV6)
+	if (putSignature(sigh, sigtd, 1))
 	    goto exit;
 
-	if (headerPut(sigh, sigtd, HEADERPUT_DEFAULT) == 0)
+    /* Add a v4 signature if requested */
+    if (flags & RPMSIGN_FLAG_RPMV4) {
+	if (putSignature(sigh, sigtd, 0))
 	    goto exit;
+
+	/* Only consider v3 signature if also adding v4 */
+	if (flags & RPMSIGN_FLAG_RPMV3) {
+	    rpmtdFree(sigtd);
+
+	    /* Assume the same signature test holds for v3 signature too */
+	    if ((sigtd = makeGPGSignature(0, sigt_v3)) == NULL)
+		goto exit;
+
+	    if (putSignature(sigh, sigtd, 0))
+		goto exit;
+	}
     }
+
 
     rc = 0;
 exit:
@@ -593,9 +637,8 @@ static int rpmSign(const char *rpm, int deleting, int flags)
     struct sigTarget_s sigt_v4;
     unsigned int origSigSize;
     int insSig = 0;
-    rpmTagVal reserveTag = RPMSIGTAG_RESERVEDSPACE;
-
-    fprintf(stdout, "%s:\n", rpm);
+    int rpmformat = 0;
+    rpmTagVal reserveTag = 0;
 
     if (manageFile(&fd, rpm, O_RDWR))
 	goto exit;
@@ -625,8 +668,10 @@ static int rpmSign(const char *rpm, int deleting, int flags)
 	goto exit;
     }
 
-    if (!headerIsEntry(h, RPMTAG_HEADERIMMUTABLE)) {
-	rpmlog(RPMLOG_ERR, _("Cannot sign RPM v3 packages\n"));
+    rpmformat = headerGetNumber(h, RPMTAG_RPMFORMAT);
+
+    if (rpmformat < 4) {
+	rpmlog(RPMLOG_ERR, _("Cannot sign RPM v3 packages: %s\n"), rpm);
 	goto exit;
     }
 
@@ -636,8 +681,31 @@ static int rpmSign(const char *rpm, int deleting, int flags)
 	flags |= RPMSIGN_FLAG_RPMV3;
     }
 
-    unloadImmutableRegion(&sigh, RPMTAG_HEADERSIGNATURES);
+    if (rpmformat >= 6) {
+	flags |= RPMSIGN_FLAG_RPMV6;
+	reserveTag = RPMSIGTAG_RESERVED;
+	/* v3 signatures are not welcome in v6 packages */
+	if (flags & RPMSIGN_FLAG_RPMV3) {
+	    rpmlog(RPMLOG_WARNING,
+		_("not generating v3 signature for v6 package: %s\n"), rpm);
+	    flags &= ~RPMSIGN_FLAG_RPMV3;
+	}
+    } else {
+	flags |= RPMSIGN_FLAG_RPMV4;
+	reserveTag = RPMSIGTAG_RESERVEDSPACE;
+	/* Ensure only one legacy signature is added if adding v6 signatures */
+	if ((flags & RPMSIGN_FLAG_RPMV6) && haveLegacySig(sigh))
+	    flags &= ~(RPMSIGN_FLAG_RPMV4|RPMSIGN_FLAG_RPMV3);
+    }
+
+    if (headerIsSource(h)) {
+	rpmlog(RPMLOG_DEBUG,
+	    _("File signatures not applicable to src.rpm: %s\n"), rpm);
+	flags &= ~(RPMSIGN_FLAG_IMA | RPMSIGN_FLAG_FSVERITY);
+    }
+
     origSigSize = headerSizeof(sigh, HEADER_MAGIC_YES);
+    unloadImmutableRegion(&sigh, RPMTAG_HEADERSIGNATURES);
 
     if (flags & RPMSIGN_FLAG_IMA) {
 	if (includeFileSignatures(&sigh, &h))
@@ -655,7 +723,6 @@ static int rpmSign(const char *rpm, int deleting, int flags)
 	deleteSigs(sigh);
     } else {
 	/* Signature target containing header + payload */
-	int v3 = (flags & RPMSIGN_FLAG_RPMV3);
 	sigt_v3.fd = fd;
 	sigt_v3.start = headerStart;
 	sigt_v3.fileName = rpm;
@@ -665,7 +732,10 @@ static int rpmSign(const char *rpm, int deleting, int flags)
 	sigt_v4 = sigt_v3;
 	sigt_v4.size = headerSizeof(h, HEADER_MAGIC_YES);
 
-	res = replaceSignature(sigh, v3 ? &sigt_v3 : NULL, &sigt_v4);
+	if (flags & RPMSIGN_FLAG_RESIGN)
+	    deleteSigs(sigh);
+
+	res = addSignature(sigh, flags, &sigt_v3, &sigt_v4);
 	if (res != 0) {
 	    if (res == 1) {
 		rpmlog(RPMLOG_WARNING,
@@ -679,18 +749,15 @@ static int rpmSign(const char *rpm, int deleting, int flags)
 	res = -1;
     }
 
-    /* Only v6 packages have this */
-    if (headerIsEntry(h, RPMSIGTAG_RESERVED))
-	reserveTag = RPMSIGTAG_RESERVED;
-
     /* Adjust reserved size for added/removed signatures */
     if (headerGet(sigh, reserveTag, &utd, HEADERGET_MINMEM)) {
-	int diff = headerSizeof(sigh, HEADER_MAGIC_YES) - origSigSize;
+	unsigned newSize = headerSizeof(sigh, HEADER_MAGIC_YES);
+	int diff = newSize - origSigSize;
 
 	/* diff can be zero if nothing was added or removed */
 	if (diff) {
 	    utd.count -= diff;
-	    if (utd.count > 0 && utd.count < origSigSize) {
+	    if (utd.count > 0 && newSize + utd.count <= origSigSize) {
 		uint8_t *zeros = (uint8_t *)xcalloc(utd.count, sizeof(*zeros));
 		utd.data = zeros;
 		headerMod(sigh, &utd);
@@ -725,7 +792,7 @@ static int rpmSign(const char *rpm, int deleting, int flags)
 	rasprintf(&trpm, "%s.XXXXXX", rpm);
 	ofd = rpmMkTemp(trpm);
 	if (ofd == NULL || Ferror(ofd)) {
-	    rpmlog(RPMLOG_ERR, _("rpmMkTemp failed\n"));
+	    rpmlog(RPMLOG_ERR, _("rpmMkTemp failed: %s\n"), trpm);
 	    goto exit;
 	}
 
@@ -767,6 +834,9 @@ static int rpmSign(const char *rpm, int deleting, int flags)
 	    }
 	}
     }
+
+    if (res == 0)
+	rpmlog(RPMLOG_INFO, "%s\n", rpm);
 
 exit:
     if (fd)	(void) closeFile(&fd);

@@ -32,6 +32,7 @@
 #include <rpm/rpmbase64.h>
 
 #include "rpmio_internal.hh"	/* XXX rpmioSlurp */
+#include "rpmmacro_internal.hh"
 #include "rpmfts.h"
 #include "rpmfi_internal.hh"	/* XXX fi->apath */
 #include "rpmbuild_internal.hh"
@@ -1176,7 +1177,7 @@ static void genCpioListAndHeader(FileList fl, rpmSpec spec, Package pkg, int isS
 			rpmstrPoolStr(fl->pool, flp->gname));
 
 	/* Use 64bit filesizes always on v6, on older only if required. */
-	if (pkg->rpmver >= 6 || fl->largeFiles) {
+	if (pkg->rpmformat >= 6 || fl->largeFiles) {
 	    rpm_loff_t rsize64 = (rpm_loff_t)flp->fl_size;
 	    headerPutUint64(h, RPMTAG_LONGFILESIZES, &rsize64, 1);
             (void) rpmlibNeedsFeature(pkg, "LargeFiles", "4.12.0-1");
@@ -1280,7 +1281,7 @@ static void genCpioListAndHeader(FileList fl, rpmSpec spec, Package pkg, int isS
     pkg->dpaths[npaths] = NULL;
 
     /* Use 64bit sizes always on v6, on older only if required. */
-    if (pkg->rpmver < 6 && totalFileSize < UINT32_MAX) {
+    if (pkg->rpmformat < 6 && totalFileSize < UINT32_MAX) {
 	rpm_off_t totalsize = totalFileSize;
 	headerPutUint32(h, RPMTAG_SIZE, &totalsize, 1);
     } else {
@@ -2151,7 +2152,7 @@ static int generateBuildIDs(FileList fl, ARGV_t *files)
 static rpmRC processBinaryFile(Package pkg, FileList fl, const char * fileName,
 			       int doGlob)
 {
-    char *diskPath = NULL;
+    std::string diskPath;
     rpmRC rc = RPMRC_OK;
     size_t fnlen = strlen(fileName);
     int trailing_slash = (fnlen > 0 && fileName[fnlen-1] == '/');
@@ -2172,27 +2173,27 @@ static rpmRC processBinaryFile(Package pkg, FileList fl, const char * fileName,
     
     /* Copy file name or glob pattern removing multiple "/" chars. */
     /*
-     * Note: rpmCleanPath should guarantee a "canonical" path. That means
+     * Note: join_path() returns a normalized path. That means
      * that the following pathologies should be weeded out:
      *		//bin//sh
      *		//usr//bin/
      *		/.././../usr/../bin//./sh
      */
-    diskPath = rpmCleanPath(rstrscat(NULL, fl->buildRoot, "/", fileName, NULL));
+    diskPath = rpm::join_path({fl->buildRoot, fileName}, false);
 
     /* Arrange trailing slash on directories */
     if (fl->cur.isDir)
-	diskPath = rstrcat(&diskPath, "/");
+	diskPath += '/';
 
     if (fl->cur.devtype)
 	doGlob = 0;
 
     if (!doGlob) {
-	rc = addFile(fl, diskPath, NULL);
+	rc = addFile(fl, diskPath.c_str(), NULL);
 	goto exit;
     }
 
-    if (rpmGlobPath(diskPath, RPMGLOB_NOCHECK, &argc, &argv))
+    if (rpmGlobPath(diskPath.c_str(), RPMGLOB_NOCHECK, &argc, &argv))
 	goto exit;
 
     for (i = 0; i < argc; i++)
@@ -2200,7 +2201,6 @@ static rpmRC processBinaryFile(Package pkg, FileList fl, const char * fileName,
     argvFree(argv);
 
 exit:
-    free(diskPath);
     if (rc) {
 	fl->processingFailed = 1;
 	rc = RPMRC_FAIL;
@@ -2364,11 +2364,10 @@ static void processSpecialDir(rpmSpec spec, Package pkg, FileList fl,
     appendLineStringBuf(docScript, sdenv);
     appendLineStringBuf(docScript, mkdocdir);
     for (i = 0; i < count; i++) {
-	char *origfile = rpmCleanPath(rstrscat(NULL, basepath, "/",
-					       sd->files[i], NULL));
+	std::string origfile = rpm::join_path({basepath, sd->files[i]}, false);
 	ARGV_t argv = NULL;
 	int argc = 0;
-	if (rpmGlobPath(origfile, RPMGLOB_NOCHECK, &argc, &argv) == 0) {
+	if (rpmGlobPath(origfile.c_str(), RPMGLOB_NOCHECK, &argc, &argv) == 0) {
 	    for (j = 0; j < argc; j++) {
 		appendStringBuf(docScript, "cp -pr '");
 		appendStringBuf(docScript, argv[j]);
@@ -2377,7 +2376,6 @@ static void processSpecialDir(rpmSpec spec, Package pkg, FileList fl,
 		appendLineStringBuf(docScript, " ||:");
 	    }
 	}
-	free(origfile);
 	files[i] = argv;
     }
     free(basepath);

@@ -25,11 +25,13 @@
 
 #include "rpmfi_internal.hh"		/* rpmfiles stuff for now */
 #include "rpmbuild_internal.hh"
+#include "rpmmacro_internal.hh"
 
 #include "debug.h"
 
 using std::string;
 using std::vector;
+using namespace rpm;
 
 struct matchRule {
     regex_t *path;
@@ -239,9 +241,8 @@ static rpmds rpmdsSingleNS(rpmstrPool pool,
 {
     rpmds ds = NULL;
     if (namespc) {
-	char *NSN = rpmExpand(namespc, "(", N, ")", NULL);
-	ds = rpmdsSinglePool(pool, tagN, NSN, EVR, Flags);
-	free(NSN);
+	auto [ ign, NSN ] = macros().expand({namespc, "(", N, ")",});
+	ds = rpmdsSinglePool(pool, tagN, NSN.c_str(), EVR, Flags);
     } else {
 	ds = rpmdsSinglePool(pool, tagN, N, EVR, Flags);
     }
@@ -1701,7 +1702,7 @@ rpmRC rpmfcGenerateDepends(const rpmSpec spec, Package pkg)
     /* Add per-file colors(#files) */
     headerPutUint32(pkg->header, RPMTAG_FILECOLORS, fc->fcolor.data(), fc->nfiles);
     
-    if (pkg->rpmver >= 6) {
+    if (pkg->rpmformat >= 6) {
 	/* Add mime types(#mime types) */
 	for (rpmsid id = 1; id <= rpmstrPoolNumStr(fc->mdict); id++) {
 	    headerPutString(pkg->header, RPMTAG_MIMEDICT,

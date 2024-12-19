@@ -25,13 +25,21 @@ AT_KEYWORDS([build])
 RPMDB_INIT
 RPMTEST_CHECK([
 
-run rpmbuild \
+rpmbuild \
   --define "packager Iam" \
   -ba ${RPMDATA}/SPECS/hello.spec
 ],
 [0],
 [ignore],
 [ignore])
+
+RPMTEST_CHECK([
+runroot rpm -qp --qf "%{buildhost}\n" /build/SRPMS/hello-1.0-1.src.rpm
+],
+[0],
+[testhost
+],
+[])
 
 RPMTEST_CHECK([
 
@@ -68,6 +76,14 @@ runroot rpmbuild -bs \
 [ignore],
 [ignore])
 
+# -bs must not leave junk behind
+RPMTEST_CHECK([
+ls ${RPMTEST}/build/BUILD
+],
+[0],
+[],
+[])
+
 RPMTEST_CHECK([
 runroot rpm -q --qf "%{packager}\n" /build/SRPMS/hello-1.0-1.src.rpm
 ],
@@ -79,7 +95,7 @@ runroot rpm -q --qf "%{packager}\n" /build/SRPMS/hello-1.0-1.src.rpm
 RPMTEST_CLEANUP
 
 AT_SETUP([rpmbuild -b buildsystem])
-AT_KEYWORDS([build])
+AT_KEYWORDS([build buildsystem])
 RPMDB_INIT
 
 cp "${RPMTEST}/data/macros.buildsystem" "${RPMTEST}/${RPM_CONFIGDIR_PATH}/macros.d/"
@@ -186,6 +202,13 @@ runroot rpmbuild -bb \
 [error: line 11: Required parametric macro %buildsystem_autotools_build not defined for buildsystem autotools
 ])
 
+RPMTEST_CHECK([
+runroot rpmspec -q --qf "%{nvr}\n" /data/SPECS/amhello.spec
+],
+[0],
+[amhello-1.0-1
+],
+[])
 RPMTEST_CLEANUP
 
 AT_SETUP([rpmbuild -b steps])
@@ -324,7 +347,7 @@ AT_SETUP([rpmbuild dir layout])
 AT_KEYWORDS([build])
 RPMDB_INIT
 RPMTEST_CHECK([
-run rpmbuild \
+rpmbuild \
 	-bi --target noarch --quiet \
 	${RPMDATA}/SPECS/simple.spec
 runroot_other find /build/BUILD|sort
@@ -342,7 +365,7 @@ runroot_other find /build/BUILD|sort
 [ignore])
 
 RPMTEST_CHECK([
-run rpmbuild \
+rpmbuild \
 	-bi --target noarch --quiet \
 	--with setup \
 	${RPMDATA}/SPECS/simple.spec
@@ -371,7 +394,7 @@ AT_KEYWORDS([build])
 RPMDB_INIT
 RPMTEST_CHECK([
 
-run rpmbuild \
+rpmbuild \
   -ba ${RPMDATA}/SPECS/hello-auto.spec
 ],
 [0],
@@ -384,7 +407,7 @@ AT_KEYWORDS([build])
 RPMDB_INIT
 RPMTEST_CHECK([
 
-run rpmbuild -D="nopatches 1" \
+rpmbuild -D="nopatches 1" \
   -bp ${RPMDATA}/SPECS/hello-auto.spec
 ],
 [0],
@@ -511,7 +534,7 @@ AT_KEYWORDS([build])
 RPMDB_INIT
 RPMTEST_CHECK([
 
-run rpmbuild \
+rpmbuild \
   -bp ${RPMDATA}/SPECS/autosetup-noroot.spec
 ],
 [0],
@@ -520,7 +543,7 @@ run rpmbuild \
 
 RPMTEST_CHECK([
 
-run rpmbuild \
+rpmbuild \
   -bp ${RPMDATA}/SPECS/autosetup-singleroot.spec
 ],
 [0],
@@ -528,7 +551,7 @@ run rpmbuild \
 [ignore])
 
 RPMTEST_CHECK([
-run rpmbuild \
+rpmbuild \
   -bp ${RPMDATA}/SPECS/autosetup-singleroot1.spec
 ],
 [0],
@@ -536,7 +559,7 @@ run rpmbuild \
 [ignore])
 
 RPMTEST_CHECK([
-run rpmbuild \
+rpmbuild \
   -bp ${RPMDATA}/SPECS/autosetup-singleroot2.spec
 ],
 [0],
@@ -549,7 +572,7 @@ AT_KEYWORDS([build])
 RPMDB_INIT
 RPMTEST_CHECK([
 
-run rpmbuild \
+rpmbuild \
   -ba --quiet ${RPMDATA}/SPECS/hello-autopatch.spec
 ],
 [0],
@@ -624,7 +647,7 @@ AT_KEYWORDS([build])
 RPMDB_INIT
 RPMTEST_CHECK([
 
-run rpmbuild \
+rpmbuild \
   --define "packager Iam" \
   --rebuild ${RPMDATA}/SRPMS/hello-1.0-1.src.rpm
 ],
@@ -646,8 +669,8 @@ AT_KEYWORDS([build])
 RPMDB_INIT
 RPMTEST_CHECK([
 
-run rpmbuild -bi ${RPMDATA}/SPECS/hello.spec &> /dev/null
-run rpmbuild --quiet -bl --short-circuit ${RPMDATA}/SPECS/hello.spec
+rpmbuild -bi ${RPMDATA}/SPECS/hello.spec &> /dev/null
+rpmbuild --quiet -bl --short-circuit ${RPMDATA}/SPECS/hello.spec
 ],
 [0],
 [],
@@ -748,7 +771,7 @@ AT_KEYWORDS([build])
 RPMDB_INIT
 RPMTEST_CHECK([
 
-run rpmbuild \
+rpmbuild \
   -ta "${RPMDATA}/SOURCES/hello-2.0.tar.gz"
 ],
 [0],
@@ -2638,7 +2661,7 @@ AT_KEYWORDS([build])
 RPMDB_INIT
 RPMTEST_CHECK([
 
-run rpmbuild \
+rpmbuild \
   --quiet -bd ${RPMDATA}/SPECS/hello.spec
 ls ls ${RPMTEST}/build/*/*.rpm | wc --lines
 ],
@@ -3623,6 +3646,37 @@ runroot rpm -q --qf "[%{filedigests} %{filenames}\n]" /build/SRPMS/hello-1.0-1.s
 [79678ec5e51e7565b4703286f26ac6a6 hello-1.0-modernize.patch
 b718a835936fd2f6c8855f210c4789a1 hello-1.0.tar.gz
 155931ba96d11559b7f116412214db3a hello.spec
+],
+[])
+RPMTEST_CLEANUP
+
+AT_SETUP([file digests sha3])
+AT_KEYWORDS([build digest])
+AT_SKIP_IF([test x$PGP = xsequoia])
+RPMDB_INIT
+RPMTEST_CHECK([[
+runroot rpmbuild -bs --quiet \
+		--define "_source_filedigest_algorithm 12" \
+		 /data/SPECS/hello.spec
+runroot rpm -q --qf "[%{filedigests} %{filenames}\n]" /build/SRPMS/hello-1.0-1.src.rpm
+]],
+[0],
+[f1a0a1e0e413d66a4bd948cb16bdd03600c7aea6dcd04522bcbc3041a29ee651 hello-1.0-modernize.patch
+a0da711d71069ab2735448140c5e0b51b4aeb3150a72877df54f372350e68644 hello-1.0.tar.gz
+bf352b9ec1645d799dde77fcde2249eb62a0a29a1c10fbbc3dce03d851132b3f hello.spec
+],
+[])
+
+RPMTEST_CHECK([[
+runroot rpmbuild -bs --quiet \
+		--define "_source_filedigest_algorithm 14" \
+		 /data/SPECS/hello.spec
+runroot rpm -q --qf "[%{filedigests} %{filenames}\n]" /build/SRPMS/hello-1.0-1.src.rpm
+]],
+[0],
+[11ddad2c1e5ef58d94d008634d9ad3a95cb7b5fab51652e73bb999c8d12110c4cdf6c572187c1a880a3c171a1af739fb48f77e98f5e30cc3bc1ec91a16182915 hello-1.0-modernize.patch
+154b8717381c284af9b939cc28199347edc5cbcc3228bf0983d52323ca19ec73ad85a834ee9851d746561a0bdfc2dfa7278846b3b7b492d66451658275e0f1d5 hello-1.0.tar.gz
+7cbf4a017c065a583caecea1de6c7e48210c949e416db788118b81d8ccbc941d0890bc48b3c250208f80b7a059a3fe40fd27426f6b25920cd533bfe83c2676a2 hello.spec
 ],
 [])
 RPMTEST_CLEANUP

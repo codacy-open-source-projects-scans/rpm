@@ -292,7 +292,7 @@ runroot rpm -U --ignorearch --ignoreos --nodeps \
 ],
 [0],
 [],
-[warning: /data/RPMS/hello-2.0-1.x86_64-signed.rpm: Header V4 RSA/SHA256 Signature, key ID 4344591e1964c5fc: NOKEY
+[warning: /data/RPMS/hello-2.0-1.x86_64-signed.rpm: Header OpenPGP V4 RSA/SHA256 signature, key ID 4344591e1964c5fc: NOKEY
 ])
 RPMTEST_CLEANUP
 
@@ -308,8 +308,8 @@ runroot rpm -U --ignorearch --ignoreos --nodeps \
 ],
 [1],
 [],
-[warning: /data/RPMS/hello-2.0-1.x86_64-signed.rpm: Header V4 RSA/SHA256 Signature, key ID 4344591e1964c5fc: NOKEY
-	package hello-2.0-1.x86_64 does not verify: Header V4 RSA/SHA256 Signature, key ID 4344591e1964c5fc: NOKEY
+[warning: /data/RPMS/hello-2.0-1.x86_64-signed.rpm: Header OpenPGP V4 RSA/SHA256 signature, key ID 4344591e1964c5fc: NOKEY
+	package hello-2.0-1.x86_64 does not verify: Header OpenPGP V4 RSA/SHA256 signature, key ID 4344591e1964c5fc: NOKEY
 ])
 RPMTEST_CLEANUP
 
@@ -361,9 +361,9 @@ runroot rpm -U --ignorearch --ignoreos --nodeps \
 [1],
 [],
 [`if test x$PGP = xlegacy; then
-    echo 'error: /tmp/hello-2.0-1.x86_64-signed.rpm: Header RSA signature: BAD (package tag 268: invalid OpenPGP signature: Corrupt PGP packet)'
+    echo 'error: /tmp/hello-2.0-1.x86_64-signed.rpm: Header OpenPGP RSA signature: BAD (package tag 268: invalid OpenPGP signature: Corrupt PGP packet)'
 else
-    echo 'error: /tmp/hello-2.0-1.x86_64-signed.rpm: Header RSA signature: BAD (package tag 268: invalid OpenPGP signature: Parsing an OpenPGP packet:'
+    echo 'error: /tmp/hello-2.0-1.x86_64-signed.rpm: Header OpenPGP RSA signature: BAD (package tag 268: invalid OpenPGP signature: Parsing an OpenPGP packet:'
     echo '  Failed to parse Signature Packet'
     echo '      because: Malformed packet: Subpacket extends beyond the end of the subpacket area)'
 fi`
@@ -387,7 +387,7 @@ runroot rpm -U --ignorearch --ignoreos --nodeps \
 ],
 [1],
 [],
-[error: /tmp/hello-2.0-1.x86_64-signed.rpm: Header V4 RSA/SHA256 Signature, key ID 4344591e1964c5fc: BAD
+[error: /tmp/hello-2.0-1.x86_64-signed.rpm: Header OpenPGP V4 RSA/SHA256 signature, key ID 4344591e1964c5fc: BAD
 error: /tmp/hello-2.0-1.x86_64-signed.rpm: Header SHA256 digest: BAD (Expected ef920781af3bf072ae9888eec3de1c589143101dff9cc0b561468d395fb766d9 != 29fdfe92782fb0470a9a164a6c94af87d3b138c63b39d4c30e0223ca1202ba82)
 error: /tmp/hello-2.0-1.x86_64-signed.rpm: Header SHA1 digest: BAD (Expected 5cd9874c510b67b44483f9e382a1649ef7743bac != 4261b2c1eb861a4152c2239bce20bfbcaa8971ba)
 error: /tmp/hello-2.0-1.x86_64-signed.rpm cannot be installed
@@ -434,19 +434,19 @@ runroot rpm -U --ignorearch --ignoreos --nodeps --noverify \
 ],
 [1],
 [INSTALL 1
-warning: /tmp/hello-2.0-1.x86_64-signed.rpm: Header V4 RSA/SHA256 Signature, key ID 4344591e1964c5fc: NOKEY
+warning: /tmp/hello-2.0-1.x86_64-signed.rpm: Header OpenPGP V4 RSA/SHA256 signature, key ID 4344591e1964c5fc: NOKEY
 error: unpacking of archive failed: cpio: Bad magic
 error: hello-2.0-1.x86_64: install failed
 INSTALL 2
 error: unpacking of archive failed: cpio: Bad magic
 error: hello-2.0-1.x86_64: install failed
 INSTALL 3
-warning: /tmp/hello-2.0-1.x86_64-signed.rpm: Header V4 RSA/SHA256 Signature, key ID 4344591e1964c5fc: NOKEY
-	package hello-2.0-1.x86_64 does not verify: Header V4 RSA/SHA256 Signature, key ID 4344591e1964c5fc: NOKEY
+warning: /tmp/hello-2.0-1.x86_64-signed.rpm: Header OpenPGP V4 RSA/SHA256 signature, key ID 4344591e1964c5fc: NOKEY
+	package hello-2.0-1.x86_64 does not verify: Header OpenPGP V4 RSA/SHA256 signature, key ID 4344591e1964c5fc: NOKEY
 INSTALL 4
 	package hello-2.0-1.x86_64 does not verify: no signature
 INSTALL 5
-warning: /tmp/hello-2.0-1.x86_64-signed.rpm: Header V4 RSA/SHA256 Signature, key ID 4344591e1964c5fc: NOKEY
+warning: /tmp/hello-2.0-1.x86_64-signed.rpm: Header OpenPGP V4 RSA/SHA256 signature, key ID 4344591e1964c5fc: NOKEY
 error: unpacking of archive failed: cpio: Bad magic
 error: hello-2.0-1.x86_64: install failed
 ],
@@ -603,14 +603,19 @@ RPMTEST_CLEANUP
 AT_SETUP([rpm -U *.src.rpm])
 AT_KEYWORDS([install])
 RPMTEST_CHECK([
-RPMDB_INIT
-
-runroot rpm \
+rpm \
+  --define "_topdir $PWD/build" \
   -U /data/SRPMS/hello-1.0-1.src.rpm
+ls build/*
 ],
 [0],
-[ignore],
-[ignore])
+[build/SOURCES:
+hello-1.0.tar.gz
+
+build/SPECS:
+hello.spec
+],
+[])
 RPMTEST_CLEANUP
 
 # ------------------------------
@@ -618,14 +623,46 @@ RPMTEST_CLEANUP
 AT_SETUP([rpm -i *.src.rpm])
 AT_KEYWORDS([install])
 RPMTEST_CHECK([
+rpm \
+  --define "_topdir $PWD/build" \
+  -i /data/SRPMS/hello-1.0-1.src.rpm
+ls build/*
+],
+[0],
+[build/SOURCES:
+hello-1.0.tar.gz
+
+build/SPECS:
+hello.spec
+],
+[])
+RPMTEST_CLEANUP
+
+# ------------------------------
+# Check if rpm -i *.src.rpm *.rpm works
+AT_SETUP([rpm -i *.src.rpm *.rpm])
+AT_KEYWORDS([install])
+RPMTEST_CHECK([
 RPMDB_INIT
 
 runroot rpm \
-  -i /data/SRPMS/hello-1.0-1.src.rpm
+  --define "_topdir /tmp/build" \
+  --ignorearch --ignoreos --nodeps \
+  -i /data/SRPMS/hello-1.0-1.src.rpm \
+     /data/RPMS/hello-2.0-1.x86_64.rpm
+runroot rpm -q hello; echo
+runroot_other sh -c 'ls /tmp/build/*'
 ],
 [0],
-[ignore],
-[ignore])
+[hello-2.0-1.x86_64
+
+/tmp/build/SOURCES:
+hello-1.0.tar.gz
+
+/tmp/build/SPECS:
+hello.spec
+],
+[])
 RPMTEST_CLEANUP
 
 # ------------------------------
@@ -867,7 +904,7 @@ for e in 1 2; do
     runroot_other cp /build/RPMS/noarch/versiontest-1.0-1.noarch.rpm /tmp/epoch${e}.rpm
 done
 # for testing sanity
-echo '%_query_all_fmt %%{nevra}' > ${HOME}/.rpmmacros
+echo '%_query_all_fmt %%{nevra}' >> ${HOME}/.rpmmacros
 
 RPMTEST_CHECK([
 RPMDB_INIT
@@ -1589,7 +1626,7 @@ group(klong) = ZyBrbG9uZyAt
 group(plong)
 groupmember(klangd/klong) = bSBrbGFuZ2Qga2xvbmcA
 user(klangd) = dSBrbGFuZ2QgLSAiS2xhbmcgc2VydmVyIiAvdmFyL2xpYi9rbGFuZ2QgL3NiaW4vbm9sb2dpbgAA
-user(plong) = dSBwbG9uZyAtICJQbG9uZyBmdSIgL3Zhci9saWIvcGxvbmcgL3NiaW4vbm9sb2dpbgAA
+user(plong) = dSEgcGxvbmcgLSAiUGxvbmcgZnUiIC92YXIvbGliL3Bsb25nIC9zYmluL25vbG9naW4A
 ],
 [warning: ignoring unsupported sysuser type: r
 ])
@@ -1618,7 +1655,7 @@ group(klong) = ZyBrbG9uZyAt
 group(plong)
 groupmember(klangd/klong) = bSBrbGFuZ2Qga2xvbmcA
 user(klangd) = dSBrbGFuZ2QgLSAiS2xhbmcgc2VydmVyIiAvdmFyL2xpYi9rbGFuZ2QgL3NiaW4vbm9sb2dpbgAA
-user(plong) = dSBwbG9uZyAtICJQbG9uZyBmdSIgL3Zhci9saWIvcGxvbmcgL3NiaW4vbm9sb2dpbgAA
+user(plong) = dSEgcGxvbmcgLSAiUGxvbmcgZnUiIC92YXIvbGliL3Bsb25nIC9zYmluL25vbG9naW4A
 ],
 [warning: ignoring unsupported sysuser type: r
 ])
@@ -1660,15 +1697,19 @@ runroot rpm -V ${VERIFYOPTS} klang-client klang-common
 RPMTEST_CHECK([
 runroot rpm -U /build/RPMS/noarch/klang-server-1.0-1.noarch.rpm
 runroot_other grep ^klangd /etc/passwd | cut -f1 -d:
+runroot_other chage -l klangd | grep "Account expires" | cut -f2 -d:
 runroot_other grep ^klangd /etc/group | cut -f1 -d:
 runroot_other grep ^plong /etc/passwd | cut -f1 -d:
+runroot_other chage -l plong | grep "Account expires" | cut -f2 -d:
 runroot_other grep ^klong /etc/group | cut -f4 -d:
 runroot rpm -V ${VERIFYOPTS} klang-server
 ],
 [0],
 [klangd
+ never
 klangd
 plong
+ Jan 02, 1970
 klangd
 ],
 [ignore])

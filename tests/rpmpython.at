@@ -340,6 +340,43 @@ for e in ts:
 [adding upgrade to transaction failed]
 )
 
+RPMPY_TEST([add bogus package to transaction 3],[
+
+for tag in ["os", "arch", "name", "version", "release"]:
+    h = ts.hdrFromFdno('${RPMDATA}/RPMS/hello-1.0-1.ppc64.rpm')
+    del h[tag]
+    try:
+        ts.addInstall(h, 'foo', 'u')
+    except rpm.error as err:
+        myprint(err)
+for e in ts:
+    myprint(e.NEVRA())
+],
+[adding upgrade to transaction failed
+adding upgrade to transaction failed
+adding upgrade to transaction failed
+adding upgrade to transaction failed
+adding upgrade to transaction failed
+],
+[])
+
+RPMPY_TEST([add bogus package to transaction 4],[
+
+h = ts.hdrFromFdno('${RPMDATA}/RPMS/hello-1.0-1.ppc64.rpm')
+del h["name"]
+h["name"] = "gpg-pubkey"
+try:
+    ts.addInstall(h, 'foo', 'u')
+except rpm.error as err:
+    myprint(err)
+for e in ts:
+    myprint(e.NEVRA())
+],
+[adding upgrade to transaction failed
+],
+[error: public keys can not be installed as gpg-pubkey packages; use rpmkeys --import <keyfile> for that
+])
+
 RPMPY_TEST([transaction element userdata],[
 mydata = { 'foo': 'bar', 'capstest': 'lock' }
 ts.addInstall('${RPMDATA}/RPMS/foo-1.0-1.noarch.rpm', 'u')
@@ -351,6 +388,24 @@ for e in ts:
 ],
 [bar
 lock]
+)
+
+RPMPY_TEST([log suppression per transaction],[
+for i in range(4):
+    try:
+        ts.addInstall('${RPMDATA}/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm', 'u')
+    except rpm.error as e:
+        print(e)
+    if i==1:
+        ts = rpm.ts()
+],
+[public key not available
+public key not available
+public key not available
+public key not available
+],
+[warning: /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm: Header OpenPGP V4 RSA/SHA512 signature, key ID 1f71177215217ee0: NOKEY
+warning: /data/RPMS/hello-2.0-1.x86_64-signed-with-subkey.rpm: Header OpenPGP V4 RSA/SHA512 signature, key ID 1f71177215217ee0: NOKEY]
 )
 
 RPMPY_TEST([transaction callback 1],[
@@ -782,3 +837,17 @@ v1.0 == v1.0: True
 v1.0 == v2.0: False
 v1.0 != v2.0: True
 ])
+
+RPMPY_TEST([archscore],[
+print(rpm.archscore('ppc64') == 0)
+print(rpm.archscore('x86_64') > 0)
+print(rpm.archscore('x86_64') < rpm.archscore('i686'))
+print(rpm.archscore('i686') < rpm.archscore('i386'))
+print(rpm.archscore('x86_64') == rpm.archscore('noarch'))
+],
+[True
+True
+True
+True
+True
+]);
