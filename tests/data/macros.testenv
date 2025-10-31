@@ -1,0 +1,7 @@
+# common macro config in the test-environment
+%_buildhost testhost
+%_topdir %{getenv:RPMTEST}/build
+%_tmppath %{getenv:RPMTEST}/var/tmp
+%_dbpath /var/lib/rpm-testsuite
+%_keyring openpgp
+%_keyringpath /var/lib/rpm-keyring

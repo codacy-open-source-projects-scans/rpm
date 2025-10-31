@@ -1,0 +1,9 @@
+.[^dockerignore]*
+!.tx
+!.gitignore
+!.mailmap
+*.*~
+*.tmp
+
+/_build
+/tests/mktree.cache
