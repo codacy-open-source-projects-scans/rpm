@@ -25,13 +25,19 @@ else
     FROM=
 fi
 
-IMAGE=rpm
+DEST_DIR="$PWD/mktree.destdir"
+CACHE_DIR="mktree.cache"
+IID_FILE="$CACHE_DIR/image-id"
+IMAGE_ID=$(cat $IID_FILE 2>/dev/null || echo "")
+BASE_TAG="rpm/base:$(sha256sum Dockerfile | head -c8)"
 ARGS="-f Dockerfile $FROM $CONTEXT"
 ROOTLESS=$([ $(id -u) == 0 ] && echo 0 || echo 1)
 CMD=$1; shift
 
 export ROOTLESS
 source mktree.common
+
+mkdir -p $CACHE_DIR
 
 rpmtests()
 {
@@ -51,32 +57,38 @@ rpmtests()
     fi
 
     $PODMAN run --privileged -it --rm --read-only --tmpfs /tmp -v $vol \
-                --workdir /srv -e ROOTLESS=$ROOTLESS $opts $IMAGE rpmtests "$@"
+                --workdir /srv -e ROOTLESS=$ROOTLESS $opts $IMAGE_ID \
+                rpmtests "$@"
 }
 
-unshared()
+clean()
 {
-    [ $(id -u) != 0 ] && [ $NATIVE == yes ] || return 0
-    $PODMAN unshare $0 $CMD "$@"
-    exit
+    rm -f "$IID_FILE"
+    [ -z "$IMAGE_ID" ] || [ -z "$($PODMAN images -q $IMAGE_ID)" ] && return
+    [ "$($PODMAN inspect -f "{{ .RepoTags }}" $IMAGE_ID)" != "[]" ] && return
+    $PODMAN rmi $IMAGE_ID >/dev/null
 }
 
 case $CMD in
-    build) unshared
+    build)
         # Build base image
-        $PODMAN build --target base -t $IMAGE/base $ARGS
+        $PODMAN build --target base -t $BASE_TAG $ARGS
 
         # Add RPM install on top
-        [ -n "$($PODMAN images -q $IMAGE)" ] && $PODMAN rmi $IMAGE
+        clean
         if [ $NATIVE == yes ]; then
             # Native build
-            id=$($PODMAN create $IMAGE/base)
-            trap "$PODMAN rm $id >/dev/null" EXIT
-            make_install $($PODMAN mount $id)
-            $PODMAN commit -q $id $IMAGE
+            id=$($PODMAN create -t $BASE_TAG)
+            trap "$PODMAN kill $id >/dev/null; $PODMAN rm $id > /dev/null" EXIT
+            $PODMAN start $id
+            rm -rf "$DEST_DIR"
+            make_install $DEST_DIR
+            $PODMAN cp $DEST_DIR/. $id:/
+            $PODMAN exec $id /usr/share/mktree/setup.sh
+            $PODMAN commit -q $id --iidfile=$IID_FILE
         else
             # Standalone build
-            $PODMAN build --target full -t $IMAGE $ARGS
+            $PODMAN build --target full --iidfile=$IID_FILE $ARGS
         fi
     ;;
     check)
@@ -90,5 +102,11 @@ case $CMD in
     ;;
     reset)
         rpmtests --reset
+    ;;
+    tag)
+        $PODMAN tag $IMAGE_ID $1
+    ;;
+    clean)
+        clean
     ;;
 esac

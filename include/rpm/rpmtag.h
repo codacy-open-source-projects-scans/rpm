@@ -35,7 +35,7 @@ extern "C" {
 typedef enum rpmTag_e {
     RPMTAG_HEADERIMAGE		= HEADER_IMAGE,		/*!< Current image. */
     RPMTAG_HEADERSIGNATURES	= HEADER_SIGNATURES,	/*!< Signatures. */
-    RPMTAG_HEADERIMMUTABLE	= HEADER_IMMUTABLE,	/*!< Original image. */
+    RPMTAG_HEADERIMMUTABLE	= HEADER_IMMUTABLE,	/* x Original image. */
     RPMTAG_HEADERREGIONS	= HEADER_REGIONS,	/*!< Regions. */
 
     RPMTAG_HEADERI18NTABLE	= HEADER_I18NTABLE, 	/* s[] !< I18N string locales. */
@@ -49,7 +49,6 @@ typedef enum rpmTag_e {
     RPMTAG_SIGPGP		= RPMTAG_SIG_BASE+3,	/* x */
     RPMTAG_SIGLEMD5_2		= RPMTAG_SIG_BASE+4,	/* x internal - obsolete */
     RPMTAG_SIGMD5	        = RPMTAG_SIG_BASE+5,	/* x */
-#define	RPMTAG_PKGID	RPMTAG_SIGMD5			/* x */
     RPMTAG_SIGGPG	        = RPMTAG_SIG_BASE+6,	/* x */
     RPMTAG_SIGPGP5	        = RPMTAG_SIG_BASE+7,	/* internal - obsolete */
 
@@ -59,7 +58,6 @@ typedef enum rpmTag_e {
     RPMTAG_DSAHEADER		= RPMTAG_SIG_BASE+11,	/* x */
     RPMTAG_RSAHEADER		= RPMTAG_SIG_BASE+12,	/* x */
     RPMTAG_SHA1HEADER		= RPMTAG_SIG_BASE+13,	/* s */
-#define	RPMTAG_HDRID	RPMTAG_SHA1HEADER	/* s */
     RPMTAG_LONGSIGSIZE		= RPMTAG_SIG_BASE+14,	/* l */
     RPMTAG_LONGARCHIVESIZE	= RPMTAG_SIG_BASE+15,	/* l */
     /* RPMTAG_SIG_BASE+16 reserved */
@@ -69,6 +67,7 @@ typedef enum rpmTag_e {
     RPMTAG_VERITYSIGNATURES	= RPMTAG_SIG_BASE+20,	/* s[] */
     RPMTAG_VERITYSIGNATUREALGO	= RPMTAG_SIG_BASE+21,	/* i */
     RPMTAG_OPENPGP		= RPMTAG_SIG_BASE+22,	/* s[] */
+    RPMTAG_SHA3_256HEADER	= RPMTAG_SIG_BASE+23,	/* s */
     RPMTAG_SIG_TOP		= HEADER_SIGTOP,
 
     RPMTAG_NAME  		= 1000,	/* s */
@@ -220,7 +219,7 @@ typedef enum rpmTag_e {
     RPMTAG_FILEDEPENDSX		= 1143,	/* i[] */
     RPMTAG_FILEDEPENDSN		= 1144,	/* i[] */
     RPMTAG_DEPENDSDICT		= 1145,	/* i[] */
-    RPMTAG_SOURCEPKGID		= 1146,	/* x */
+    RPMTAG_SOURCESIGMD5		= 1146,	/* x */
     RPMTAG_FILECONTEXTS		= 1147,	/* s[] - obsolete */
     RPMTAG_FSCONTEXTS		= 1148,	/* s[] extension */
     RPMTAG_RECONTEXTS		= 1149,	/* s[] extension */
@@ -371,12 +370,12 @@ typedef enum rpmTag_e {
     RPMTAG_TRANSFILETRIGGERTYPE		= 5089, /* s[] extension */
     RPMTAG_FILESIGNATURES	= 5090, /* s[] */
     RPMTAG_FILESIGNATURELENGTH  = 5091, /* i */
-    RPMTAG_PAYLOADDIGEST	= 5092, /* s[] */
-    RPMTAG_PAYLOADDIGESTALGO	= 5093, /* i */
+    RPMTAG_PAYLOADSHA256	= 5092, /* s[] */
+    RPMTAG_PAYLOADSHA256ALGO	= 5093, /* i (obsolete) */
     RPMTAG_AUTOINSTALLED	= 5094, /* i reservation (unimplemented) */
     RPMTAG_IDENTITY		= 5095, /* s reservation (unimplemented) */
     RPMTAG_MODULARITYLABEL	= 5096, /* s */
-    RPMTAG_PAYLOADDIGESTALT	= 5097, /* s[] */
+    RPMTAG_PAYLOADSHA256ALT	= 5097, /* s[] */
     RPMTAG_ARCHSUFFIX		= 5098, /* s extension */
     RPMTAG_SPEC			= 5099, /* s */
     RPMTAG_TRANSLATIONURL	= 5100, /* s */
@@ -397,6 +396,13 @@ typedef enum rpmTag_e {
     RPMTAG_FILEMIMEINDEX	= 5115, /* i[] */
     RPMTAG_MIMEDICT		= 5116, /* s[] */
     RPMTAG_FILEMIMES		= 5117, /* s[] extension */
+    RPMTAG_PACKAGEDIGESTS	= 5118, /* s[] */
+    RPMTAG_PACKAGEDIGESTALGOS	= 5119, /* i[] */
+    RPMTAG_SOURCENEVR		= 5120,	/* s */
+    RPMTAG_PAYLOADSHA512	= 5121, /* s */
+    RPMTAG_PAYLOADSHA512ALT	= 5122, /* s */
+    RPMTAG_PAYLOADSHA3_256	= 5123, /* s */
+    RPMTAG_PAYLOADSHA3_256ALT	= 5124, /* s */
 
     RPMTAG_FIRSTFREE_TAG	/*!< internal */
 } rpmTag;
@@ -457,6 +463,7 @@ typedef enum rpmSigTag_e {
     RPMSIGTAG_VERITYSIGNATURES		= RPMTAG_VERITYSIGNATURES,
     RPMSIGTAG_VERITYSIGNATUREALGO	= RPMTAG_VERITYSIGNATUREALGO,
     RPMSIGTAG_OPENPGP			= RPMTAG_OPENPGP,
+    RPMSIGTAG_SHA3_256			= RPMTAG_SHA3_256HEADER,
     RPMSIGTAG_RESERVED			= RPMTAG_SIG_TOP,
 } rpmSigTag;
 

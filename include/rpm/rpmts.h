@@ -107,8 +107,10 @@ enum rpmVSFlags_e {
     RPMVSF_NODSAHEADER	= (1 << 10),
     RPMVSF_NORSAHEADER	= (1 << 11),
     RPMVSF_NOOPENPGP	= (1 << 12),
-    /* bit(s) 12-15 unused */
-    RPMVSF_NOPAYLOAD	= (1 << 16),
+    RPMVSF_NOSHA3_256HEADER = (1 << 13),
+    RPMVSF_NOSHA512PAYLOAD = (1 << 14),
+    RPMVSF_NOSHA3_256PAYLOAD = (1 << 15),
+    RPMVSF_NOSHA256PAYLOAD = (1 << 16),
     RPMVSF_NOMD5	= (1 << 17),
     RPMVSF_NODSA	= (1 << 18),
     RPMVSF_NORSA	= (1 << 19)
@@ -117,10 +119,18 @@ enum rpmVSFlags_e {
 
 typedef rpmFlags rpmVSFlags;
 
+#define RPMVSF_NOPAYLOAD	\
+  ( RPMVSF_NOSHA3_256PAYLOAD |	\
+    RPMVSF_NOSHA512PAYLOAD |	\
+    RPMVSF_NOSHA256PAYLOAD )
+
 #define	RPMVSF_MASK_NODIGESTS	\
   ( RPMVSF_NOSHA1HEADER |	\
     RPMVSF_NOSHA256HEADER |	\
-    RPMVSF_NOPAYLOAD |	\
+    RPMVSF_NOSHA256PAYLOAD |	\
+    RPMVSF_NOSHA512PAYLOAD |	\
+    RPMVSF_NOSHA3_256PAYLOAD |	\
+    RPMVSF_NOSHA3_256HEADER |	\
     RPMVSF_NOMD5 )
 #define	_RPMVSF_NODIGESTS	RPMVSF_MASK_NODIGESTS
 
@@ -135,6 +145,7 @@ typedef rpmFlags rpmVSFlags;
 #define	RPMVSF_MASK_NOHEADER	\
   ( RPMVSF_NOSHA1HEADER |	\
     RPMVSF_NOSHA256HEADER |	\
+    RPMVSF_NOSHA3_256HEADER |	\
     RPMVSF_NOOPENPGP |		\
     RPMVSF_NODSAHEADER |	\
     RPMVSF_NORSAHEADER )
@@ -142,7 +153,9 @@ typedef rpmFlags rpmVSFlags;
 
 #define	RPMVSF_MASK_NOPAYLOAD	\
   ( RPMVSF_NOMD5 |		\
-    RPMVSF_NOPAYLOAD |		\
+    RPMVSF_NOSHA256PAYLOAD |	\
+    RPMVSF_NOSHA512PAYLOAD |	\
+    RPMVSF_NOSHA3_256PAYLOAD |	\
     RPMVSF_NODSA |		\
     RPMVSF_NORSA )
 #define	_RPMVSF_NOPAYLOAD	RPMVSF_MASK_NOPAYLOAD
@@ -363,6 +376,14 @@ rpmRC rpmtxnImportPubkey(rpmtxn txn, const unsigned char * pkt, size_t pktlen);
  * 			RPMRC_FAIL on other failure
  */
 rpmRC rpmtxnDeletePubkey(rpmtxn txn, rpmPubkey key);
+
+/** \ingroup rpmts
+ * Rebuild key store using current settings and fill it with keys form keyring
+ * @param txn		transaction handle
+ * @param from		backend to get the keys from
+ * @return		RPMRC_OK on success
+ */
+rpmRC rpmtxnRebuildKeystore(rpmtxn txn, const char * from);
 
 /** \ingroup rpmts
  * Retrieve handle for keyring used for this transaction set

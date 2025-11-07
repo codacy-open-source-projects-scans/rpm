@@ -78,10 +78,10 @@ static const struct scriptInfo_s scriptInfo[] = {
 	0, },
     { RPMSCRIPT_TRIGGERPREIN, "triggerprein", RPMSENSE_TRIGGERPREIN,
 	RPMTAG_TRIGGERPREIN, 0, 0,
-	0, },
+	RPMSCRIPT_FLAG_CRITICAL, },
     { RPMSCRIPT_TRIGGERUN, "triggerun", RPMSENSE_TRIGGERUN,
 	RPMTAG_TRIGGERUN, 0, 0,
-	0, },
+	RPMSCRIPT_FLAG_CRITICAL, },
     { RPMSCRIPT_TRIGGERIN, "triggerin", RPMSENSE_TRIGGERIN,
 	RPMTAG_TRIGGERIN, 0, 0,
 	0, },
@@ -177,6 +177,7 @@ static rpmRC runLuaScript(rpmPlugins plugins, ARGV_const_t prefixes,
     /* Lua scripts can change our cwd and umask, save and restore */
     cwd = open(".", O_RDONLY);
     if (cwd != -1) {
+	FILE *sfd = NULL;
 	mode_t oldmask = umask(0);
 	umask(oldmask);
 
@@ -184,9 +185,20 @@ static rpmRC runLuaScript(rpmPlugins plugins, ARGV_const_t prefixes,
 	lua_pushstring(L, script->rpmver);
 	lua_settable(L, LUA_REGISTRYINDEX);
 
+	if (scriptFd) {
+	    sfd = fdopen(dup(Fileno(scriptFd)), "a");
+	    if (sfd)
+		rpmluaPushOutstream(lua, sfd);
+	}
+
 	if (chdir("/") == 0 &&
 		rpmluaRunScript(lua, scriptbuf, script->descr, NULL, *argvp) == 0) {
 	    rc = RPMRC_OK;
+	}
+
+	if (sfd) {
+	    rpmluaPopOutstream(lua);
+	    fclose(sfd);
 	}
 
 	lua_getfield(L, LUA_REGISTRYINDEX, "RPM_PACKAGE_RPMVERSION");
@@ -669,6 +681,9 @@ rpmScript rpmScriptFromTriggerTag(Header h, rpmTagVal triggerTag,
 	script->args[0] = (char *)(script->args + 2);
 	script->args[1] = NULL;
 	strcpy(script->args[0], prog);
+	/* XXX File triggers never fail the transaction element */
+	if (tm == RPMSCRIPT_TRANSFILETRIGGER || tm == RPMSCRIPT_FILETRIGGER)
+	    script->flags &= ~RPMSCRIPT_FLAG_CRITICAL;
     }
 
     rpmtdFreeData(&tscripts);

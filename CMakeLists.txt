@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.18)
 
 project(rpm
-	VERSION 5.99.90
+	VERSION 6.0.90
 	DESCRIPTION "The RPM Package Manager"
 	HOMEPAGE_URL "http://rpm.org"
 	LANGUAGES C CXX
@@ -23,7 +23,6 @@ option(ENABLE_UBSAN "Enable undefined behavior-sanitizer" OFF)
 
 option(WITH_CAP "Build with capability support" ON)
 option(WITH_ACL "Build with ACL support" ON)
-option(WITH_ARCHIVE "Build with libarchive support" ON)
 option(WITH_SELINUX "Build with SELinux support" ON)
 option(WITH_DBUS "Build with DBUS support" ON)
 option(WITH_AUDIT "Build with audit support" ON)
@@ -40,6 +39,7 @@ option(WITH_LIBDW "Build with libdw support" ON)
 option(WITH_LIBELF "Build with libelf support" ON)
 option(WITH_LIBLZMA "Build with liblzma support" ON)
 option(WITH_DOXYGEN "Build API docs with doxygen" OFF)
+option(WITH_WEBSITE "Build standalone website" OFF)
 
 set(RPM_CONFIGDIR "${CMAKE_INSTALL_PREFIX}/lib/rpm" CACHE PATH "rpm home")
 set(RPM_MACROSDIR "${RPM_CONFIGDIR}/macros.d")
@@ -52,12 +52,12 @@ set(RPM_VENDOR "vendor" CACHE STRING "rpm vendor string")
 # - incrementing a more significant version segment resets changes to
 #   any less significant segments
 set(RPM_SOVERSION 10)
-set(RPM_LIBVERSION ${RPM_SOVERSION}.0.0)
+set(RPM_LIBVERSION ${RPM_SOVERSION}.6.0)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # extensions needed for typeof() hacks during transition
 set(CMAKE_CXX_EXTENSIONS ON)
@@ -270,7 +270,7 @@ endif()
 list(APPEND db_backends dummy)
 
 if (ENABLE_PYTHON)
-	find_package(Python3 3.7 COMPONENTS Interpreter Development REQUIRED)
+	find_package(Python3 3.10 COMPONENTS Interpreter Development REQUIRED)
 endif()
 
 if (WITH_CAP)
@@ -311,6 +311,15 @@ mark_as_advanced(AWK)
 
 find_program(FIND_DEBUGINFO find-debuginfo)
 mark_as_advanced(FIND_DEBUGINFO)
+
+find_program(PODMAN podman)
+mark_as_advanced(PODMAN)
+
+find_program(SCDOC NAMES scdoc REQUIRED)
+mark_as_advanced(SCDOC)
+
+find_program(SCD2HTML NAMES scd2html)
+mark_as_advanced(SCD2HTML)
 
 function(chkdef func req)
 	string(TOUPPER ${func} FUNC)
@@ -406,7 +415,6 @@ if (ENABLE_WERROR)
 	add_compile_options(-Werror)
 endif()
 
-set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-c++20-compat -Wno-sign-compare")
 set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wmissing-prototypes -Wstrict-prototypes")
 
 if (ENABLE_ASAN)
@@ -425,11 +433,10 @@ endif()
 
 # try to ensure some compiler sanity and hardening options where supported
 foreach (flag -fno-strict-overflow -fno-delete-null-pointer-checks -fhardened)
-	check_c_compiler_flag(${flag} found)
-	if (found)
+	check_c_compiler_flag(${flag} compiler-supports${flag})
+	if (compiler-supports${flag})
 		add_compile_options(${flag})
 	endif()
-	unset(found)
 endforeach()
 
 # generated sources
@@ -456,6 +463,9 @@ if (ENABLE_PYTHON)
 	add_subdirectory(python)
 endif()
 
+set(RPM_PLUGINDIR ${CMAKE_INSTALL_FULL_LIBDIR}/rpm-plugins
+       CACHE PATH "rpm plugin directory")
+
 if (ENABLE_PLUGINS)
 	add_subdirectory(plugins)
 endif()
@@ -476,6 +486,7 @@ endif()
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/rpm.pc DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 install(DIRECTORY DESTINATION ${RPM_CONFIGDIR}/lua)
 install(DIRECTORY DESTINATION ${RPM_CONFIGDIR}/macros.d)
+install(DIRECTORY DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/rpm)
 install(FILES CONTRIBUTING.md COPYING CREDITS INSTALL README TYPE DOC)
 
 add_custom_target(ChangeLog
@@ -491,20 +502,11 @@ function(add_tarball targetname namever treeish)
 	set(distfmt tar)
 	set(tarname ${namever}.${distfmt})
 	set(distname ${tarname}.bz2)
-	set(docname ${namever}-doc.${distfmt})
-
-	add_custom_target(${docname}
-		DEPENDS man apidoc
-		COMMAND tar
-			-C ${CMAKE_BINARY_DIR}
-			--transform 's:^:${namever}/:'
-			-cf ${docname} docs/man/*.[1-8] docs/html/
-	)
 
 	add_custom_target(${distname}
 		WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 		VERBATIM
-		DEPENDS ChangeLog ${docname} po/rpm.pot
+		DEPENDS ChangeLog po/rpm.pot
 		COMMAND git archive
 			--format=${distfmt}
 			--output=${CMAKE_BINARY_DIR}/${tarname}
@@ -518,9 +520,6 @@ function(add_tarball targetname namever treeish)
 				--file=${CMAKE_BINARY_DIR}/${tarname} \
 				${CMAKE_BINARY_DIR}/$sha1.tar \
 			 && rm -f ${CMAKE_BINARY_DIR}/$sha1.tar"
-		COMMAND tar --concatenate
-				--file=${CMAKE_BINARY_DIR}/${tarname}
-				${CMAKE_BINARY_DIR}/${docname}
 		COMMAND bzip2 -f ${CMAKE_BINARY_DIR}/${tarname}
 	)
 	add_custom_target(${targetname} DEPENDS ${distname})

@@ -11,7 +11,11 @@ The [rpm.org web page](https://rpm.org/) is created from its own [GitHub reposit
 Man Pages
 ---------
 
-The man pages in *man/* are Markdown documents. They are rendered to the man page format during build. These pre-rendered pages are also shipped with the (release) tarball. That way building rpm from the tarball does not require the *pandoc* as long as the man pages are unchanged.
+The man pages in *man/* are scdoc sources. 
+They are rendered to the man page format during build.
+
+Consult *man/rpm-man-template.scd* for style guidance, and use it
+as a template for new man pages.
 
 The man pages are also rendered to HTML together with the Reference Manual (see below).
 
@@ -27,4 +31,19 @@ The reference manual in the *manual/* dir is an GitHub Pages site. It is rendere
 
 The Reference Manual is currently not shipped in rendered form in the tarball.
 
-To render it locally one can follow [this article](https://docs.github.com/en/pages/setting-up-a-github-pages-site-with-jekyll/testing-your-github-pages-site-locally-with-jekyll) and render it with *Jekyll* with the use of the *github-pages* gem.
+To render the site locally, make sure you have Jekyll installed and that your
+build is configured as follows:
+
+    cmake -DWITH_WEBSITE=ON [...]
+
+Then, from the build directory, run:
+
+    make site
+
+This builds the site and then serves it locally at `http://0.0.0.0:4000` for
+preview.
+
+> [!NOTE]
+> The API documentation isn't built by default and so the link on the index
+> page won't work. To build it, make sure you have Doxygen installed and then
+> (re)configure your build using `-DWITH_DOXYGEN=ON`.

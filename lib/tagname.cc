@@ -55,7 +55,7 @@ static int tagCmpValue(const void * avp, const void * bvp)
     return ret;
 }
 
-class tagTable {
+class RPM_GNUC_INTERNAL tagTable {
     public:
     tagTable();
     headerTagTableEntry getEntry(const char *tag);
@@ -166,9 +166,6 @@ const char * rpmTagGetName(rpmTagVal tag)
     /* XXX make sure rpmdb indices are identically named. */
     case RPMTAG_CONFLICTS:
 	name = "Conflictname";
-	break;
-    case RPMTAG_HDRID:
-	name = "Sha1header";
 	break;
 
     default:

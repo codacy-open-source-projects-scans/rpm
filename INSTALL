@@ -1,6 +1,15 @@
 To build RPM you will need several other packages:
 --------------------------------------------------
 
+A C++ compiler that supports C++ 20 standard. When the default c++ compiler
+does not support C++ 20 you can tell cmake to use a different compiler by
+setting CMAKE_CXX_COMPILER, eg.
+
+cmake -DCMAKE_CXX_COMPILER=g++-13
+
+Note that using a C++ compiler such as g++ is needed, gcc may seem to work but
+will not compile the code correctly.
+
 The cmake build system, version 3.18 or later.
 It is available from
     https://cmake.org/
@@ -26,8 +35,14 @@ The libmagic (aka file) library for file type detection (used by rpmbuild).
 The source for the file utility + library is available from
     ftp://ftp.astron.com/pub/file/
 
+The libarchive library for archive access, available from
+    https://www.libarchive.org/
+
+The scdoc manual page generator, available from
+    https://git.sr.ht/~sircmpwn/scdoc
+
 You will need a cryptographic library to support digests and an OpenPGP
-implementation to support signatures. rpm-sequoia (>= 1.3.0 required) is
+implementation to support signatures. rpm-sequoia (>= 1.9.0 required) is
 the most complete option, covering both, and also the default:
     https://github.com/rpm-software-management/rpm-sequoia
 
@@ -86,7 +101,7 @@ These are available from
     http://tukaani.org/xz/
 
 Python bindings to RPM library are built by default, but it can be disabled
-with -DENABLE_PYTHON=OFF. You'll need to have Python >= 3.7
+with -DENABLE_PYTHON=OFF. You'll need to have Python >= 3.10
 runtime and C API development environment installed.
 Python is available from:
     http://www.python.org/
@@ -123,6 +138,10 @@ available from
 If you plan on using cryptographic signatures you will need a version
 of GPG, available from
     http://www.gnupg.org/
+
+If you wish to build the API reference manual (in HTML format), use
+-DWITH_DOXYGEN=ON.  This requires Doxygen which is available from
+    https://github.com/doxygen/
 
 OpenMP multithreading support is automatically enabled if your C compiler has
 support for OpenMP version 4.5 or higher (to disable, use -DENABLE_OPENMP=OFF

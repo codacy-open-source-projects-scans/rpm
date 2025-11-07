@@ -5,6 +5,7 @@
 #include "system.h"
 
 #include <vector>
+#include <unordered_map>
 
 #include <rpm/rpmtypes.h>
 #include <rpm/rpmlib.h>		/* RPM_MACHTABLE_* */
@@ -34,6 +35,7 @@ struct rpmte_s {
     void *userdata;		/*!< Application private user data. */
 
     Header h;			/*!< Package header. */
+    Header auxh;		/*!< Auxiliary data (from install) */
     char * NEVR;		/*!< Package name-version-release. */
     char * NEVRA;		/*!< Package name-version-release.arch. */
     char * name;		/*!< Name: */
@@ -49,16 +51,7 @@ struct rpmte_s {
     unsigned int db_instance;	/*!< Database instance (of removed pkgs) */
     tsortInfo tsi;		/*!< Dependency ordering chains. */
 
-    rpmds thisds;		/*!< This package's provided NEVR. */
-    rpmds provides;		/*!< Provides: dependencies. */
-    rpmds requires;		/*!< Requires: dependencies. */
-    rpmds conflicts;		/*!< Conflicts: dependencies. */
-    rpmds obsoletes;		/*!< Obsoletes: dependencies. */
-    rpmds order;		/*!< Order: dependencies. */
-    rpmds recommends;		/*!< Recommends: dependencies. */
-    rpmds suggests;		/*!< Suggests: dependencies. */
-    rpmds supplements;		/*!< Supplements: dependencies. */
-    rpmds enhances;		/*!< Enhances: dependencies. */
+    std::unordered_map<rpmTagVal, rpmds> dependencies;
     rpmfiles files;		/*!< File information. */
     rpmps probs;		/*!< Problems (relocations) */
     rpmts ts;			/*!< Parent transaction */
@@ -72,6 +65,7 @@ struct rpmte_s {
     int nrelocs;		/*!< (TR_ADDED) No. of relocations. */
     uint8_t *badrelocs;		/*!< (TR_ADDED) Bad relocations (or NULL) */
     FD_t fd;			/*!< (TR_ADDED) Payload file descriptor. */
+    int vfylevel;		/*!< (TR_ADDED) Per-pkg verify level (if any) */
     int verified;		/*!< (TR_ADDED) Verification status */
     int addop;			/*!< (TR_ADDED) RPMTE_INSTALL/UPDATE/REINSTALL */
 
@@ -91,16 +85,10 @@ static int rpmteClose(rpmte te, int reset_fi);
 
 void rpmteCleanDS(rpmte te)
 {
-    te->thisds = rpmdsFree(te->thisds);
-    te->provides = rpmdsFree(te->provides);
-    te->requires = rpmdsFree(te->requires);
-    te->conflicts = rpmdsFree(te->conflicts);
-    te->obsoletes = rpmdsFree(te->obsoletes);
-    te->recommends = rpmdsFree(te->recommends);
-    te->suggests = rpmdsFree(te->suggests);
-    te->supplements = rpmdsFree(te->supplements);
-    te->enhances = rpmdsFree(te->enhances);
-    te->order = rpmdsFree(te->order);
+    for (auto &pair : te->dependencies) {
+	rpmdsFree(pair.second);
+    }
+    te->dependencies.clear();
 }
 
 static rpmfiles getFiles(rpmte p, Header h)
@@ -189,17 +177,17 @@ static int addTE(rpmte p, Header h, fnpyKey key, rpmRelocation * relocs)
 
     p->pkgFileSize = 0;
     p->headerSize = headerSizeof(h, HEADER_MAGIC_NO);
+    p->vfylevel = -1;
 
-    p->thisds = rpmdsThisPool(tspool, h, RPMTAG_PROVIDENAME, RPMSENSE_EQUAL);
-    p->provides = rpmdsNewPool(tspool, h, RPMTAG_PROVIDENAME, 0);
-    p->requires = rpmdsNewPool(tspool, h, RPMTAG_REQUIRENAME, 0);
-    p->conflicts = rpmdsNewPool(tspool, h, RPMTAG_CONFLICTNAME, 0);
-    p->obsoletes = rpmdsNewPool(tspool, h, RPMTAG_OBSOLETENAME, 0);
-    p->order = rpmdsNewPool(tspool, h, RPMTAG_ORDERNAME, 0);
-    p->recommends = rpmdsNewPool(tspool, h, RPMTAG_RECOMMENDNAME, 0);
-    p->suggests = rpmdsNewPool(tspool, h, RPMTAG_SUGGESTNAME, 0);
-    p->supplements = rpmdsNewPool(tspool, h, RPMTAG_SUPPLEMENTNAME, 0);
-    p->enhances = rpmdsNewPool(tspool, h, RPMTAG_ENHANCENAME, 0);
+    p->dependencies[RPMTAG_NAME] = \
+	rpmdsThisPool(tspool, h, RPMTAG_PROVIDENAME, RPMSENSE_EQUAL);
+    for (rpmTagVal tag : {
+	    RPMTAG_PROVIDENAME, RPMTAG_SUPPLEMENTNAME, RPMTAG_ENHANCENAME,
+	    RPMTAG_REQUIRENAME, RPMTAG_RECOMMENDNAME, RPMTAG_SUGGESTNAME,
+	    RPMTAG_CONFLICTNAME, RPMTAG_OBSOLETENAME, RPMTAG_ORDERNAME
+	}) {
+	p->dependencies[tag] = rpmdsNewPool(tspool, h, tag, 0);
+    }
 
     /* Relocation needs to know file count before rpmfiNew() */
     headerGet(h, RPMTAG_BASENAMES, &bnames, HEADERGET_MINMEM);
@@ -263,6 +251,7 @@ rpmte rpmteFree(rpmte te)
 	fdFree(te->fd);
 	rpmfilesFree(te->files);
 	headerFree(te->h);
+	headerFree(te->auxh);
 	rpmfsFree(te->fs);
 	rpmpsFree(te->probs);
 	rpmteCleanDS(te);
@@ -287,6 +276,17 @@ rpmte rpmteNew(rpmts ts, Header h, rpmElementType type, fnpyKey key,
     }
 
     return p;
+}
+
+Header rpmteHeaderAux(rpmte te, int init)
+{
+    Header auxh = NULL;
+    if (te != NULL) {
+	if (te->auxh == NULL && init == 1)
+	    te->auxh = headerNew();
+	auxh = headerLink(te->auxh);
+    }
+    return auxh;
 }
 
 unsigned int rpmteDBInstance(rpmte te) 
@@ -466,21 +466,10 @@ rpmds rpmteDS(rpmte te, rpmTagVal tag)
 {
     if (te == NULL)
 	return NULL;
+    if (!te->dependencies.contains(tag))
+	return NULL;
 
-    switch (tag) {
-    case RPMTAG_NAME:		return te->thisds;
-    case RPMTAG_PROVIDENAME:	return te->provides;
-    case RPMTAG_REQUIRENAME:	return te->requires;
-    case RPMTAG_CONFLICTNAME:	return te->conflicts;
-    case RPMTAG_OBSOLETENAME:	return te->obsoletes;
-    case RPMTAG_ORDERNAME:	return te->order;
-    case RPMTAG_RECOMMENDNAME:	return te->recommends;
-    case RPMTAG_SUGGESTNAME:	return te->suggests;
-    case RPMTAG_SUPPLEMENTNAME:	return te->supplements;
-    case RPMTAG_ENHANCENAME:	return te->enhances;
-    default:			break;
-    }
-    return NULL;
+    return te->dependencies[tag];
 }
 
 void rpmteCleanFiles(rpmte te)
@@ -799,6 +788,24 @@ void rpmteSetVerified(rpmte te, int verified)
 int rpmteVerified(rpmte te)
 {
     return (te != NULL) ? te->verified : 0;
+}
+
+int rpmteSetVfyLevel(rpmte te, int vfylevel)
+{
+    int ovfylevel = -1;
+    if (te != NULL) {
+	ovfylevel = te->vfylevel;
+	te->vfylevel = vfylevel;
+    }
+    return ovfylevel;
+}
+
+int rpmteVfyLevel(rpmte te)
+{
+    int vfylevel = -1;
+    if (te != NULL)
+	vfylevel = (te->vfylevel >= 0) ? te->vfylevel : rpmtsVfyLevel(te->ts);
+    return vfylevel;
 }
 
 int rpmteAddOp(rpmte te)

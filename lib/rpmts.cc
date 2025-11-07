@@ -129,6 +129,8 @@ int rpmtsSetDBMode(rpmts ts, int dbmode)
     return rc;
 }
 
+static
+void rpmtsLockFree(rpmts ts);
 
 int rpmtsRebuildDB(rpmts ts)
 {
@@ -151,6 +153,12 @@ int rpmtsRebuildDB(rpmts ts)
 	    rc = rpmdbRebuild(ts->rootDir, NULL, NULL, rebuildflags);
 	rpmtxnEnd(txn);
     }
+    /* Re-create lock file */
+    rpmtsLockFree(ts);
+    txn = rpmtxnBegin(ts, RPMTXN_WRITE);
+    if (txn)
+	rpmtxnEnd(txn);
+
     return rc;
 }
 
@@ -266,18 +274,12 @@ int rpmtsSetKeyring(rpmts ts, rpmKeyring keyring)
     return 0;
 }
 
-static keystore *getKeystore(rpmts ts)
+static keystore *rpmtsGetKeystore(rpmts ts)
 {
     if (ts->keystore == NULL) {
 	char *krtype = rpmExpand("%{?_keyring}", NULL);
-
-	if (rstreq(krtype, "fs")) {
-	    ts->keystore = new keystore_fs();
-	} else if (rstreq(krtype, "rpmdb")) {
-	    ts->keystore = new keystore_rpmdb();
-	} else if (rstreq(krtype, "openpgp")) {
-	    ts->keystore = new keystore_openpgp_cert_d();
-	} else {
+	ts->keystore = getKeystore(krtype);
+	if (ts->keystore == NULL) {
 	    /* Fall back to using rpmdb if unknown, for now at least */
 	    rpmlog(RPMLOG_WARNING,
 		    _("unknown keyring type: %s, using rpmdb\n"), krtype);
@@ -294,7 +296,7 @@ static void loadKeyring(rpmts ts)
     /* Never load the keyring if signature checking is disabled */
     if ((rpmtsVSFlags(ts) & RPMVSF_MASK_NOSIGNATURES) !=
 	RPMVSF_MASK_NOSIGNATURES) {
-	ts->keystore = getKeystore(ts);
+	ts->keystore = rpmtsGetKeystore(ts);
 	ts->keyring = rpmKeyringNew();
 	rpmtxn txn = rpmtxnBegin(ts, RPMTXN_READ);
 	if (txn) {
@@ -321,7 +323,6 @@ rpmRC rpmtxnImportPubkey(rpmtxn txn, const unsigned char * pkt, size_t pktlen)
     rpmRC rc = RPMRC_FAIL;		/* assume failure */
     char *lints = NULL;
     rpmPubkey pubkey = NULL;
-    rpmPubkey oldkey = NULL;
     rpmKeyring keyring = NULL;
     int krc;
 
@@ -353,26 +354,13 @@ rpmRC rpmtxnImportPubkey(rpmtxn txn, const unsigned char * pkt, size_t pktlen)
     if ((pubkey = rpmPubkeyNew(pkt, pktlen)) == NULL)
 	goto exit;
 
-    oldkey = rpmKeyringLookupKey(keyring, pubkey);
-    if (oldkey) {
-	rpmPubkey mergedkey = NULL;
-	if (rpmPubkeyMerge(oldkey, pubkey, &mergedkey) != RPMRC_OK)
-	    goto exit;
-	if (!mergedkey) {
-	    rc = RPMRC_OK;		/* already have key */
-	    goto exit;
-	}
-	rpmPubkeyFree(pubkey);
-	pubkey = mergedkey;
-    }
-
-    krc = rpmKeyringModify(keyring, pubkey, oldkey ? RPMKEYRING_REPLACE : RPMKEYRING_ADD);
+    krc = rpmKeyringModify(keyring, pubkey, RPMKEYRING_ADD);
     if (krc < 0)
 	goto exit;
 
     /* If we dont already have the key, make a persistent record of it */
     if (krc == 0) {
-	rc = ts->keystore->import_key(txn, pubkey, oldkey ? 1 : 0);
+	rc = ts->keystore->import_key(txn, pubkey, 1);
     } else {
 	rc = RPMRC_OK;		/* already have key */
     }
@@ -380,7 +368,6 @@ rpmRC rpmtxnImportPubkey(rpmtxn txn, const unsigned char * pkt, size_t pktlen)
 exit:
     /* Clean up. */
     rpmPubkeyFree(pubkey);
-    rpmPubkeyFree(oldkey);
 
     rpmKeyringFree(keyring);
     return rc;
@@ -418,6 +405,43 @@ rpmRC rpmtsImportPubkey(const rpmts ts, const unsigned char * pkt, size_t pktlen
 	rc = rpmtxnImportPubkey(txn, pkt, pktlen);
 	rpmtxnEnd(txn);
     }
+    return rc;
+}
+
+rpmRC rpmtxnRebuildKeystore(rpmtxn txn, const char * from)
+{
+    rpmts ts = rpmtxnTs(txn);
+    rpmRC rc = RPMRC_OK;
+    rpmKeyring keyring = rpmtsGetKeyring(ts, 1);
+    rpmKeyringIterator iter = NULL;
+
+    if (from) {
+	keystore * ks = getKeystore(from);
+
+	if (!ks) {
+	    rpmlog(RPMLOG_ERR, _("unknown keyring type: %s\n"),
+		   from);
+	    rc = RPMRC_FAIL;
+	    goto exit;
+	}
+
+	rpmKeyringFree(keyring);
+	keyring = rpmKeyringNew();
+	ks->load_keys(txn, keyring);
+	ks->delete_store(txn);
+	delete ks;
+    }
+
+    ts->keystore->delete_store(txn);
+
+    for (iter = rpmKeyringInitIterator(keyring, 0); auto key = rpmKeyringIteratorNext(iter);) {
+	ts->keystore->import_key(txn, key, 0, 0);
+    }
+    rpmKeyringIteratorFree(iter);
+
+ exit:
+
+    rpmKeyringFree(keyring);
     return rc;
 }
 
@@ -568,8 +592,7 @@ rpmts rpmtsFree(rpmts ts)
 	ts->scriptFd = NULL;
     }
     ts->rootDir = _free(ts->rootDir);
-    ts->lockPath = _free(ts->lockPath);
-    ts->lock = rpmlockFree(ts->lock);
+    rpmtsLockFree(ts);
 
     ts->keyring = rpmKeyringFree(ts->keyring);
     ts->netsharedPaths = argvFree(ts->netsharedPaths);
@@ -1047,15 +1070,11 @@ rpmte rpmtsiNext(rpmtsi tsi, rpmElementTypes types)
 }
 
 #define RPMLOCK_PATH LOCALSTATEDIR "/rpm/.rpm.lock"
-rpmtxn rpmtxnBegin(rpmts ts, rpmtxnFlags flags)
+static
+void rpmtsLockInit(rpmts ts)
 {
     static const char * const rpmlock_path_default = "%{?_rpmlock_path}";
-    rpmtxn txn = NULL;
-
-    if (ts == NULL)
-	return NULL;
-
-    if (ts->lockPath == NULL) {
+    if (ts && ts->lockPath == NULL) {
 	const char *rootDir = rpmtsRootDir(ts);
 	char *t;
 
@@ -1074,6 +1093,26 @@ rpmtxn rpmtxnBegin(rpmts ts, rpmtxnFlags flags)
 
     if (ts->lock == NULL)
 	ts->lock = rpmlockNew(ts->lockPath, _("transaction"));
+
+}
+
+static
+void rpmtsLockFree(rpmts ts)
+{
+    if (ts) {
+	ts->lockPath = _free(ts->lockPath);
+	ts->lock = rpmlockFree(ts->lock);
+    }
+}
+
+rpmtxn rpmtxnBegin(rpmts ts, rpmtxnFlags flags)
+{
+    rpmtxn txn = NULL;
+
+    if (ts == NULL)
+	return NULL;
+
+    rpmtsLockInit(ts);
 
     int lockmode = (flags & RPMTXN_WRITE) ? RPMLOCK_WRITE : RPMLOCK_READ;
     if (rpmlockAcquire(ts->lock, lockmode)) {

@@ -23,6 +23,7 @@ static struct pgpValTbl_s const pgpSigTypeTbl[] = {
     { PGPSIGTYPE_SUBKEY_REVOKE,	"Subkey revocation signature" },
     { PGPSIGTYPE_CERT_REVOKE,	"Certification revocation signature" },
     { PGPSIGTYPE_TIMESTAMP,	"Timestamp signature" },
+    { PGPSIGTYPE_THIRD_PARTY,	"Third-Party Confirmation signature" },
     { -1,			"Unknown signature type" },
 };
 
@@ -37,6 +38,17 @@ static struct pgpValTbl_s const pgpPubkeyTbl[] = {
     { PGPPUBKEYALGO_ELGAMAL,	"Elgamal" },
     { PGPPUBKEYALGO_DH,		"Diffie-Hellman (X9.42)" },
     { PGPPUBKEYALGO_EDDSA,	"EdDSA" },
+    { PGPPUBKEYALGO_X25519,	"X25519" },
+    { PGPPUBKEYALGO_X448,	"X448" },
+    { PGPPUBKEYALGO_ED25519,	"Ed25519" },
+    { PGPPUBKEYALGO_ED448,	"Ed448" },
+    { PGPPUBKEYALGO_ML_DSA65_ED25519,	"ML-DSA-65+Ed25519" },
+    { PGPPUBKEYALGO_ML_DSA87_ED448,	"ML-DSA-87+Ed448" },
+    { PGPPUBKEYALGO_SLH_DSA_SHAKE_128S,	"SLH-DSA-SHAKE-128s" },
+    { PGPPUBKEYALGO_SLH_DSA_SHAKE_128F,	"SLH-DSA-SHAKE-128f" },
+    { PGPPUBKEYALGO_SLH_DSA_SHAKE_256S,	"SLH-DSA-SHAKE-256s" },
+    { PGPPUBKEYALGO_ML_KEM768_X25519,	"ML-KEM-768+X25519" },
+    { PGPPUBKEYALGO_ML_KEM1024_X448,	"ML-KEM-1024+X448" },
     { -1,			"Unknown public key algorithm" },
 };
 
@@ -52,6 +64,9 @@ static struct pgpValTbl_s const pgpSymkeyTbl[] = {
     { PGPSYMKEYALGO_AES_192,	"AES(192-bit key)" },
     { PGPSYMKEYALGO_AES_256,	"AES(256-bit key)" },
     { PGPSYMKEYALGO_TWOFISH,	"TWOFISH(256-bit key)" },
+    { PGPSYMKEYALGO_CAMELLIA_128,"Camellia(128-bit key)" },
+    { PGPSYMKEYALGO_CAMELLIA_192,"Camellia(192-bit key)" },
+    { PGPSYMKEYALGO_CAMELLIA_256,"Camellia(256-bit key)" },
     { PGPSYMKEYALGO_NOENCRYPT,	"no encryption" },
     { -1,			"Unknown symmetric key algorithm" },
 };
@@ -75,6 +90,8 @@ static struct pgpValTbl_s const pgpHashTbl[] = {
     { PGPHASHALGO_SHA384,	"SHA384" },
     { PGPHASHALGO_SHA512,	"SHA512" },
     { PGPHASHALGO_SHA224,	"SHA224" },
+    { PGPHASHALGO_SHA3_256,	"SHA3-256" },
+    { PGPHASHALGO_SHA3_512,	"SHA3-512" },
     { -1,			"Unknown hash algorithm" },
 };
 
@@ -108,6 +125,8 @@ static struct pgpValTbl_s const pgpSubTypeTbl[] = {
     { PGPSUBTYPE_FEATURES,	"features" },
     { PGPSUBTYPE_EMBEDDED_SIG,	"embedded signature" },
     { PGPSUBTYPE_ISSUER_FINGERPRINT,"issuer fingerprint" },
+    { PGPSUBTYPE_INTREC_FINGERPRINT,"intended recipient fingerprint" },
+    { PGPSUBTYPE_PFERER_AEAD,	"preferred AEAD ciphersuites" },
 
     { PGPSUBTYPE_INTERNAL_100,	"internal subpkt type 100" },
     { PGPSUBTYPE_INTERNAL_101,	"internal subpkt type 101" },
@@ -139,9 +158,10 @@ static struct pgpValTbl_s const pgpTagTbl[] = {
     { PGPTAG_USER_ID,		"User ID" },
     { PGPTAG_PUBLIC_SUBKEY,	"Public Subkey" },
     { PGPTAG_COMMENT_OLD,	"Comment (from OpenPGP draft)" },
-    { PGPTAG_PHOTOID,		"PGP's photo ID" },
+    { PGPTAG_USER_ATTRIBUTE,	"User Attribute" },
     { PGPTAG_ENCRYPTED_MDC,	"Integrity protected encrypted data" },
     { PGPTAG_MDC,		"Manipulaion detection code packet" },
+    { PGPTAG_PADDING,		"Padding" },
     { PGPTAG_PRIVATE_60,	"Private #60" },
     { PGPTAG_COMMENT,		"Comment" },
     { PGPTAG_PRIVATE_62,	"Private #62" },

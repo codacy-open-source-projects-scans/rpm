@@ -118,11 +118,13 @@ static int readFile(FD_t fd, char **msg)
     return (count != 0);
 }
 
+namespace {
 struct vfydata_s {
     int seen;
     int bad;
     int verbose;
 };
+}
 
 static int vfyCb(struct rpmsinfo_s *sinfo, void *cbdata)
 {
@@ -173,8 +175,12 @@ rpmRC rpmpkgRead(struct rpmvs_s *vs, FD_t fd,
     rpmvsFiniRange(vs, RPMSIG_HEADER);
 
     /* Fish interesting tags from the main header. This is a bit hacky... */
-    rpmvsAppendTag(vs, blob, RPMTAG_PAYLOADDIGEST);
-    rpmvsAppendTag(vs, blob, RPMTAG_PAYLOADDIGESTALT);
+    rpmvsAppendTag(vs, blob, RPMTAG_PAYLOADSHA256);
+    rpmvsAppendTag(vs, blob, RPMTAG_PAYLOADSHA256ALT);
+    rpmvsAppendTag(vs, blob, RPMTAG_PAYLOADSHA512);
+    rpmvsAppendTag(vs, blob, RPMTAG_PAYLOADSHA512ALT);
+    rpmvsAppendTag(vs, blob, RPMTAG_PAYLOADSHA3_256);
+    rpmvsAppendTag(vs, blob, RPMTAG_PAYLOADSHA3_256ALT);
 
     /* If needed and not explicitly disabled, read the payload as well. */
     if (rpmvsRange(vs) & RPMSIG_PAYLOAD) {

@@ -45,10 +45,12 @@ static const char *sigTagName(uint32_t tag)
     case RPMSIGTAG_LONGARCHIVESIZE: return "Longarchivesize";
     case RPMSIGTAG_SHA256: return "Sha256";
     case RPMSIGTAG_FILESIGNATURES: return "Filesignatures";
-    case RPMSIGTAG_FILESIGNATURELENGTH: return "filesignaturelength";
-    case RPMSIGTAG_VERITYSIGNATURES: return "veritysignatures";
-    case RPMSIGTAG_VERITYSIGNATUREALGO: return "veritysignaturealgo";
+    case RPMSIGTAG_FILESIGNATURELENGTH: return "Filesignaturelength";
+    case RPMSIGTAG_VERITYSIGNATURES: return "Veritysignatures";
+    case RPMSIGTAG_VERITYSIGNATUREALGO: return "Veritysignaturealgo";
+    case RPMSIGTAG_OPENPGP: return "Openpgp";
     case RPMSIGTAG_RESERVED: return "Reserved";
+    case RPMSIGTAG_SHA3_256: return "Sha3_256";
     default:
 	break;
     }
@@ -113,7 +115,8 @@ static int readhdr(int fd, int sighdr, const char *msg)
     uint8_t *dataStart;
     struct entryInfo *pe;
     struct entryInfo * entry = NULL;
-    int rc = 1, i;
+    int rc = 1;
+    off_t foffset = lseek(fd, 0, SEEK_CUR);
 
     if (read(fd, intro, sizeof(intro)) != sizeof(intro)) {
 	fprintf(stderr, "header intro fail");
@@ -122,6 +125,7 @@ static int readhdr(int fd, int sighdr, const char *msg)
 
     printf("%s:\n", msg);
     
+    printf("File offset: %lu\n", foffset);
     printf("Header magic: %x (reserved: %x)\n", intro[0], intro[1]);
 
     numEntries = ntohl(intro[2]);
@@ -177,7 +181,7 @@ static int readhdr(int fd, int sighdr, const char *msg)
 	printf("Dribbles: %d\n", numEntries-ril);
     }
 	    
-    for (i = 0; i < numEntries; i++, entry++) {
+    for (unsigned i = 0; i < numEntries; i++, entry++) {
 	int in_region = (ril > 0 && i < ril);
 	const char *marker = "";
 	if (in_region) {
@@ -202,6 +206,13 @@ exit:
     return rc;
 }
 
+static int readpayload(int fd)
+{
+    printf("Payload:\n");
+    printf("File offset: %lu\n", lseek(fd, 0, SEEK_CUR));
+    return 0;
+}
+
 static int readpkg(int fd)
 {
     int rc = 1;
@@ -218,6 +229,8 @@ static int readpkg(int fd)
 	return rc;
 
     /* payload ... */
+    if (readpayload(fd))
+	return rc;
 
     return 0;
 }

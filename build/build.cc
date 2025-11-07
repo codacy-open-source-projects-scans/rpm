@@ -5,6 +5,8 @@
 
 #include "system.h"
 
+#include <fstream>
+
 #include <errno.h>
 #include <sys/wait.h>
 #include <sys/types.h>
@@ -345,7 +347,21 @@ static rpmRC doBuildDir(rpmSpec spec, int test, int inPlace, StringBuf *sbp)
 	rpmlog(RPMLOG_ERR,
 		_("failed to create package build directory %s: %s\n"),
 		spec->buildDir, strerror(errno));
+    } else {
+	auto envpath = join_path({"%{builddir}", "rpmbuild.env"});
+	rpmlog(RPMLOG_NOTICE, _("Creating(rpmbuild.env): %s"), envpath.c_str());
+	std::ofstream envfile(envpath, envfile.trunc);
+	auto [ ign, buf ] = macros().expand("%{___build_pre_env}\n");
+	envfile << buf;
+	if (envfile.bad()) {
+	    rpmlog(RPMLOG_ERR, _("failed to write %s: %s\n"),
+		    envpath.c_str(), strerror(errno));
+	    rc = RPMRC_FAIL;
+	} else {
+	    rpmlog(RPMLOG_NOTICE, "%s", buf.c_str());
+	}
     }
+
     return rc;
 }
 
@@ -435,6 +451,10 @@ static int buildSpec(rpmts ts, BTA_t buildArgs, rpmSpec spec, int what)
 		what |= RPMBUILD_MKBUILDDIR;
 	    what &= ~(RPMBUILD_PREP|RPMBUILD_RMBUILD);
 	}
+
+	/* If we don't create a build dir, we can't very well remove it */
+	if (!(what & RPMBUILD_MKBUILDDIR))
+	    what &= ~(RPMBUILD_RMBUILD);
 
 	if ((what & RPMBUILD_CHECKBUILDREQUIRES) &&
 	    (rc = doCheckBuildRequires(ts, spec, test)))

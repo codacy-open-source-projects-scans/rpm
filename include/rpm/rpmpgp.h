@@ -56,14 +56,17 @@ typedef enum pgpTag_e {
     PGPTAG_USER_ID		= 13, /*!< User ID */
     PGPTAG_PUBLIC_SUBKEY	= 14, /*!< Public Subkey */
     PGPTAG_COMMENT_OLD		= 16, /*!< Comment (from OpenPGP draft) */
-    PGPTAG_PHOTOID		= 17, /*!< PGP's photo ID */
+    PGPTAG_USER_ATTRIBUTE	= 17, /*!< User Attribute packet */
     PGPTAG_ENCRYPTED_MDC	= 18, /*!< Integrity protected encrypted data */
     PGPTAG_MDC			= 19, /*!< Manipulaion detection code packet */
+    PGPTAG_PADDING		= 21, /*!< Padding packet */
     PGPTAG_PRIVATE_60		= 60, /*!< Private or Experimental Values */
     PGPTAG_COMMENT		= 61, /*!< Comment */
     PGPTAG_PRIVATE_62		= 62, /*!< Private or Experimental Values */
     PGPTAG_CONTROL		= 63  /*!< Control (GPG) */
 } pgpTag;
+
+#define PGPTAG_PHOTOID PGPTAG_USER_ATTRIBUTE /* legacy name */
 
 /** \ingroup rpmpgp
  * 5.2.1. Signature Types
@@ -86,7 +89,8 @@ typedef enum pgpSigType_e {
     PGPSIGTYPE_KEY_REVOKE	 = 0x20, /*!< Key revocation */
     PGPSIGTYPE_SUBKEY_REVOKE	 = 0x28, /*!< Subkey revocation */
     PGPSIGTYPE_CERT_REVOKE	 = 0x30, /*!< Certification revocation */
-    PGPSIGTYPE_TIMESTAMP	 = 0x40  /*!< Timestamp */
+    PGPSIGTYPE_TIMESTAMP	 = 0x40, /*!< Timestamp */
+    PGPSIGTYPE_THIRD_PARTY	 = 0x50, /*!< Third-Party Confirmation */
 } pgpSigType;
 
 /** \ingroup rpmpgp
@@ -102,7 +106,18 @@ typedef enum pgpPubkeyAlgo_e {
     PGPPUBKEYALGO_ECDSA		= 19,	/*!< ECDSA */
     PGPPUBKEYALGO_ELGAMAL	= 20,	/*!< Elgamal */
     PGPPUBKEYALGO_DH		= 21,	/*!< Diffie-Hellman (X9.42) */
-    PGPPUBKEYALGO_EDDSA		= 22	/*!< EdDSA */
+    PGPPUBKEYALGO_EDDSA		= 22,	/*!< EdDSA */
+    PGPPUBKEYALGO_X25519	= 25,	/*!< X25519 */
+    PGPPUBKEYALGO_X448		= 26,	/*!< X448 */
+    PGPPUBKEYALGO_ED25519	= 27,	/*!< Ed25519 */
+    PGPPUBKEYALGO_ED448		= 28,	/*!< Ed448 */
+    PGPPUBKEYALGO_ML_DSA65_ED25519	= 30, /*!< ML-DSA-65+Ed25519 */
+    PGPPUBKEYALGO_ML_DSA87_ED448	= 31, /*!< ML-DSA-87+Ed448 */
+    PGPPUBKEYALGO_SLH_DSA_SHAKE_128S	= 32, /*!< SLH-DSA-SHAKE-128s */
+    PGPPUBKEYALGO_SLH_DSA_SHAKE_128F	= 33, /*!< SLH-DSA-SHAKE-128f */
+    PGPPUBKEYALGO_SLH_DSA_SHAKE_256S	= 34, /*!< SLH-DSA-SHAKE-256s */
+    PGPPUBKEYALGO_ML_KEM768_X25519 	= 35, /*!< ML-KEM-768+X25519 */
+    PGPPUBKEYALGO_ML_KEM1024_X448 	= 36, /*!< ML-KEM-1024+X448 */
 } pgpPubkeyAlgo;
 
 /** \ingroup rpmpgp
@@ -120,6 +135,9 @@ typedef enum pgpSymkeyAlgo_e {
     PGPSYMKEYALGO_AES_192	=  8,	/*!< AES(192-bit key) */
     PGPSYMKEYALGO_AES_256	=  9,	/*!< AES(256-bit key) */
     PGPSYMKEYALGO_TWOFISH	= 10,	/*!< TWOFISH(256-bit key) */
+    PGPSYMKEYALGO_CAMELLIA_128	= 11,	/*!< Camellia with 128-bit */
+    PGPSYMKEYALGO_CAMELLIA_192	= 12,	/*!< Camellia with 192-bit */
+    PGPSYMKEYALGO_CAMELLIA_256	= 13,	/*!< Camellia with 256-bit */
     PGPSYMKEYALGO_NOENCRYPT	= 110	/*!< no encryption */
 } pgpSymkeyAlgo;
 
@@ -197,6 +215,8 @@ typedef enum pgpSubType_e {
     PGPSUBTYPE_FEATURES		=  30, /*!< feature flags (gpg) */
     PGPSUBTYPE_EMBEDDED_SIG	=  32, /*!< embedded signature (gpg) */
     PGPSUBTYPE_ISSUER_FINGERPRINT= 33, /*!< issuer fingerprint */
+    PGPSUBTYPE_INTREC_FINGERPRINT= 35, /*!< intended recipient fingerprint */
+    PGPSUBTYPE_PFERER_AEAD	= 39,  /*!<  preferred AEAD ciphercuites */
 
     PGPSUBTYPE_INTERNAL_100	= 100, /*!< internal or user-defined */
     PGPSUBTYPE_INTERNAL_101	= 101, /*!< internal or user-defined */
@@ -468,6 +488,15 @@ int pgpDigParamsVersion(pgpDigParams digp);
  * return		seconds since the UNIX Epoch.
  */
 uint32_t pgpDigParamsCreationTime(pgpDigParams digp);
+
+/** \ingroup rpmpgp
+ * Return salt of a signature (OpenPGP v6 signatures)
+ * @param digp		parameter container
+ * @param[out] datap	salt data
+ * @param[out] lenp	length of the salt
+ * @return		0 on success
+ */
+int pgpDigParamsSalt(pgpDigParams digp, const uint8_t **datap, size_t *lenp);
 
 /** \ingroup rpmpgp
  * Destroy parsed OpenPGP packet parameter(s).

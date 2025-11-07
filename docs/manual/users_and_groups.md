@@ -31,7 +31,7 @@ packaged sysusers.d files create provides for the users and/or groups they
 create. This ensures correct installation when a package relies
 on user/group from another package.
 
-Explict group membership (m) will also create a dependency on both the user
+Explicit group membership (m) will also create a dependency on both the user
 and the group name.
 
 By default the dependencies are hard requirements, but as this can be
@@ -41,8 +41,8 @@ to weaken these into recommends-dependencies by setting
 
 ## Limitations
 
-At this time, rpm only supports the `u`, `g`, (since RPM 4.20) `m`
-and (since RPM 6.0) the `u!` directives of sysusers.d format and
+At this time, rpm only supports the `u`, `g`, (since RPM 4.20.0) `m`
+and (since RPM 4.20.1) the `u!` directives of sysusers.d format and
 ignores others. If other directives are needed, the package will need
 to call systemd-sysusers with the correct arguments manually.
 

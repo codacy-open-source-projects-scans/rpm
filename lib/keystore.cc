@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/file.h>
+#include <filesystem>
 
 #include <rpm/header.h>
 #include <rpm/rpmbase64.h>
@@ -18,11 +19,27 @@
 #include <rpm/rpmtypes.h>
 
 #include "rpmts_internal.hh"
+#include "rpmmacro_internal.hh"
 
 #include "debug.h"
 
 using std::string;
 using namespace rpm;
+namespace fs = std::filesystem;
+
+keystore *rpm::getKeystore(const char * krtype)
+{
+    keystore * keystore = NULL;
+    if (rstreq(krtype, "fs")) {
+	keystore = new keystore_fs();
+    } else if (rstreq(krtype, "rpmdb")) {
+	keystore = new keystore_rpmdb();
+    } else if (rstreq(krtype, "openpgp")) {
+	keystore = new keystore_openpgp_cert_d();
+    }
+    return keystore;
+}
+
 
 static int makePubkeyHeader(rpmts ts, rpmPubkey key, Header * hdrp);
 
@@ -42,12 +59,14 @@ static rpmRC load_keys_from_glob(rpmtxn txn, rpmKeyring keyring, string glob)
 	rpmPubkey key = rpmPubkeyRead(*f);
 
 	if (!key) {
-	    rpmlog(RPMLOG_ERR, _("%s: reading of public key failed.\n"), *f);
+	    rpmlog(RPMLOG_WARNING, _("Could not read key %s\n"), *f);
 	    continue;
 	}
 
 	if (rpmKeyringAddKey(keyring, key) == 0) {
 	    rpmlog(RPMLOG_DEBUG, "Loaded key %s\n", *f);
+	} else {
+	    rpmlog(RPMLOG_WARNING, _("Could not load key %s\n"), *f);
 	}
 	rpmPubkeyFree(key);
     }
@@ -96,6 +115,29 @@ exit:
     return rc;
 }
 
+static rpmRC delete_file_store(std::string path)
+{
+    try {
+	fs::remove_all(path);
+    } catch (std::filesystem::filesystem_error& e) {
+	return RPMRC_FAIL;
+    }
+    return RPMRC_OK;
+}
+
+/* Wrapper for private delete_key() methods that falls back to short keyid */
+static rpmRC rpm::delete_key_compat(auto keystore, rpmtxn txn, rpmPubkey key, auto skip)
+{
+    rpmRC rc = RPMRC_NOTFOUND;
+    string fp = rpmPubkeyFingerprintAsHex(key);
+
+    if (keystore->delete_key(txn, fp, skip) == RPMRC_NOTFOUND) {
+	/* make sure an old, short keyid version gets removed */
+	keystore->delete_key(txn, fp.substr(32), skip);
+    }
+
+    return rc;
+}
 
 /*****************************************************************************/
 
@@ -125,7 +167,7 @@ rpmRC keystore_fs::delete_key(rpmtxn txn, const string & keyid, const string & n
 
 rpmRC keystore_fs::delete_key(rpmtxn txn, rpmPubkey key)
 {
-    return delete_key(txn, rpmPubkeyFingerprintAsHex(key));
+    return delete_key_compat(this, txn, key, "");
 }
 
 rpmRC keystore_fs::import_key(rpmtxn txn, rpmPubkey key, int replace, rpmFlags flags)
@@ -140,14 +182,16 @@ rpmRC keystore_fs::import_key(rpmtxn txn, rpmPubkey key, int replace, rpmFlags f
 
     if (!rc && replace) {
 	/* find and delete the old pubkey entry */
-	if (delete_key(txn, fp, keyfmt) == RPMRC_NOTFOUND) {
-	    /* make sure an old, short keyid version gets removed */
-	    delete_key(txn, fp.substr(32), keyfmt);
-	}
+	delete_key_compat(this, txn, key, keyfmt);
     }
 
     free(dir);
     return rc;
+}
+
+rpmRC keystore_fs::delete_store(rpmtxn txn)
+{
+    return delete_file_store(expand_path({rpmtxnRootDir(txn), "%{_keyringpath}/"}));
 }
 
 /*****************************************************************************/
@@ -213,6 +257,11 @@ rpmRC keystore_openpgp_cert_d::delete_key(rpmtxn txn, rpmPubkey key)
     return rc;
 }
 
+rpmRC keystore_openpgp_cert_d::delete_store(rpmtxn txn)
+{
+    return delete_file_store(expand_path({rpmtxnRootDir(txn), "%{_keyringpath}/"}));
+}
+
 rpmRC keystore_openpgp_cert_d::import_key(rpmtxn txn, rpmPubkey key, int replace, rpmFlags flags)
 {
     rpmRC rc = RPMRC_NOTFOUND;
@@ -243,6 +292,10 @@ rpmRC keystore_rpmdb::load_keys(rpmtxn txn, rpmKeyring keyring)
     rpmdbMatchIterator mi;
 
     rpmlog(RPMLOG_DEBUG, "loading keyring from rpmdb\n");
+    rpmts ts = rpmtxnTs(txn);
+    if (rpmtsGetDBMode(ts) == -1 && rpmtsOpenDB(ts, O_RDONLY))
+        return RPMRC_FAIL;
+
     mi = rpmtsInitIterator(rpmtxnTs(txn), RPMDBI_NAME, "gpg-pubkey", 0);
     while ((h = rpmdbNextIterator(mi)) != NULL) {
 	struct rpmtd_s pubkeys;
@@ -259,20 +312,24 @@ rpmRC keystore_rpmdb::load_keys(rpmtxn txn, rpmKeyring keyring)
 	}
 
 	while ((key = rpmtdNextString(&pubkeys))) {
+	    int rc = 1;
 	    uint8_t *pkt;
 	    size_t pktlen;
 
-	    if (rpmBase64Decode(key, (void **) &pkt, &pktlen) == 0) {
+	    if ((rc = rpmBase64Decode(key, (void **) &pkt, &pktlen)) == 0) {
 		rpmPubkey key = rpmPubkeyNew(pkt, pktlen);
 
 		if (key) {
-		    if (rpmKeyringAddKey(keyring, key) == 0) {
+		    if ((rc = rpmKeyringAddKey(keyring, key)) == 0) {
 			rpmlog(RPMLOG_DEBUG, "Loaded key %s\n", nevr);
 		    }
 		    rpmPubkeyFree(key);
 		}
 		free(pkt);
 	    }
+
+	    if (rc)
+		rpmlog(RPMLOG_WARNING, _("Could not load key %s\n"), nevr);
 	}
 	free(nevr);
 	rpmtdFreeData(&pubkeys);
@@ -308,13 +365,39 @@ rpmRC keystore_rpmdb::delete_key(rpmtxn txn, const string & keyid, unsigned int 
 
 rpmRC keystore_rpmdb::delete_key(rpmtxn txn, rpmPubkey key)
 {
-    return delete_key(txn, rpmPubkeyFingerprintAsHex(key));
+    return delete_key_compat(this, txn, key, 0);
 }
+
+rpmRC keystore_rpmdb::delete_store(rpmtxn txn)
+{
+    Header h = NULL;
+    rpmRC rc = RPMRC_OK;
+    rpmts ts = rpmtxnTs(txn);
+    if (rpmtsOpenDB(ts, (O_RDWR|O_CREAT)))
+	return RPMRC_FAIL;
+
+    rpmdbMatchIterator mi = rpmtsInitIterator(rpmtxnTs(txn), RPMDBI_NAME, "gpg-pubkey", 0);
+    while ((h = rpmdbNextIterator(mi)) != NULL) {
+	rpmRC rrc = rpmdbRemove(rpmtsGetRdb(rpmtxnTs(txn)), headerGetInstance(h)) ?
+	    RPMRC_FAIL : RPMRC_OK;
+	if (rrc != RPMRC_OK) {
+	    rpmlog(RPMLOG_WARNING, "can't remove key %s", headerGetString(h, RPMTAG_NEVR));
+	    rc = rrc;
+	}
+    }
+    rpmdbFreeIterator(mi);
+    return rc;
+}
+
+
 
 rpmRC keystore_rpmdb::import_key(rpmtxn txn, rpmPubkey key, int replace, rpmFlags flags)
 {
     Header h = NULL;
     rpmRC rc = RPMRC_FAIL;
+    rpmts ts = rpmtxnTs(txn);
+    if (rpmtsOpenDB(ts, (O_RDWR|O_CREAT)))
+	return RPMRC_FAIL;
 
     if (makePubkeyHeader(rpmtxnTs(txn), key, &h) != 0)
 	return rc;
@@ -324,12 +407,7 @@ rpmRC keystore_rpmdb::import_key(rpmtxn txn, rpmPubkey key, int replace, rpmFlag
     if (!rc && replace) {
 	/* find and delete the old pubkey entry */
 	unsigned int newinstance = headerGetInstance(h);
-	char *keyid = headerFormat(h, "%{version}", NULL);
-	if (delete_key(txn, keyid, newinstance) == RPMRC_NOTFOUND) {
-	    /* make sure an old, short keyid version gets removed */
-	    delete_key(txn, keyid+32, newinstance);
-	}
-	free(keyid);
+	delete_key_compat(this, txn, key, newinstance);
     }
     headerFree(h);
 
@@ -388,6 +466,7 @@ static Header makeImmutable(Header h)
     if (h != NULL) {
 	char *sha1 = NULL;
 	char *sha256 = NULL;
+	char *sha3_256 = NULL;
 	unsigned int blen = 0;
 	void *blob = headerExport(h, &blen);
 
@@ -395,21 +474,25 @@ static Header makeImmutable(Header h)
 	rpmDigestBundle bundle = rpmDigestBundleNew();
 	rpmDigestBundleAdd(bundle, RPM_HASH_SHA1, RPMDIGEST_NONE);
 	rpmDigestBundleAdd(bundle, RPM_HASH_SHA256, RPMDIGEST_NONE);
+	rpmDigestBundleAdd(bundle, RPM_HASH_SHA3_256, RPMDIGEST_NONE);
 
 	rpmDigestBundleUpdate(bundle, rpm_header_magic, sizeof(rpm_header_magic));
 	rpmDigestBundleUpdate(bundle, blob, blen);
 
 	rpmDigestBundleFinal(bundle, RPM_HASH_SHA1, (void **)&sha1, NULL, 1);
 	rpmDigestBundleFinal(bundle, RPM_HASH_SHA256, (void **)&sha256, NULL, 1);
+	rpmDigestBundleFinal(bundle, RPM_HASH_SHA3_256, (void **)&sha3_256, NULL, 1);
 
-	if (sha1 && sha256) {
+	if (sha1 && sha256 && sha3_256) {
 	    headerPutString(h, RPMTAG_SHA1HEADER, sha1);
 	    headerPutString(h, RPMTAG_SHA256HEADER, sha256);
+	    headerPutString(h, RPMTAG_SHA3_256HEADER, sha3_256);
 	} else {
 	    h = headerFree(h);
 	}
 	free(sha1);
 	free(sha256);
+	free(sha3_256);
 	free(blob);
 	rpmDigestBundleFree(bundle);
     }

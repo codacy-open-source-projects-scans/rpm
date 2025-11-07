@@ -2,9 +2,8 @@
 
 AT_BANNER([RPM config file behavior])
 
-AT_SETUP([config file install/upgrade/erase])
+RPMTEST_SETUP_RW([config file install/upgrade/erase])
 AT_KEYWORDS([install])
-RPMDB_INIT
 for v in "1.0" "2.0"; do
     runroot rpmbuild --quiet -bb \
         --define "ver $v" \
@@ -14,7 +13,7 @@ done
 
 # Install over existing config file
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -33,7 +32,7 @@ otherstuff
 
 # Install over existing identical config file, no backup needed
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -50,7 +49,7 @@ test ! -f "${cf}"
 
 # Erase unmodified config file, no backup here
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -66,7 +65,7 @@ test ! -f "${cf}"
 
 # Erase modified config file
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -86,7 +85,7 @@ otherstuff
 
 # Upgrade package with config file, no backup here
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -103,7 +102,7 @@ foo
 
 # Upgrade package with config file, no backup here
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -118,7 +117,7 @@ grep -c  "touch" output.txt
 
 # Upgrade package with locally modified config file, unchanged in pkg
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -138,9 +137,8 @@ otherstuff
 RPMTEST_CLEANUP
 
 # ------------------------------
-AT_SETUP([config(noreplace) file install/upgrade/erase])
+RPMTEST_SETUP_RW([config(noreplace) file install/upgrade/erase])
 AT_KEYWORDS([install])
-RPMDB_INIT
 
 runroot rpmbuild --quiet -bb \
         --define "ver 1.0" \
@@ -150,7 +148,7 @@ runroot rpmbuild --quiet -bb \
 
 # Install over existing config file
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 echo "otherstuff" > "${cf}"
@@ -173,7 +171,7 @@ warning: /etc/my.conf saved as /etc/my.conf.rpmsave]
 
 # Erase modified config(noreplace) file
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -193,9 +191,8 @@ otherstuff
 RPMTEST_CLEANUP
 
 # ------------------------------
-AT_SETUP([upgrade changing config])
+RPMTEST_SETUP_RW([upgrade changing config])
 AT_KEYWORDS([install])
-RPMDB_INIT
 
 for v in "1.0" "2.0"; do
     runroot rpmbuild --quiet -bb \
@@ -206,7 +203,7 @@ done
 
 # Upgrade package with unmodified config file, changed in pkg
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -223,9 +220,8 @@ foo-2.0
 
 # ------------------------------
 # Upgrade package with locally modified config file, changed in pkg
-AT_KEYWORDS([install])
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -249,7 +245,7 @@ otherstuff
 # ------------------------------
 # Modified config file matches the content from new package.
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -270,9 +266,8 @@ RPMTEST_CLEANUP
 
 # config(noreplace) variants of the same cases.
 # ------------------------------
-AT_SETUP([upgrade changing config(noreplace)])
+RPMTEST_SETUP_RW([upgrade changing config(noreplace)])
 AT_KEYWORDS([install])
-RPMDB_INIT
 
 for v in "1.0" "2.0"; do
     runroot rpmbuild --quiet -bb \
@@ -284,7 +279,7 @@ done
 #
 # Upgrade package with config file, no backup here
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -301,7 +296,7 @@ foo
 
 # Upgrade package with locally modified config file, unchanged in pkg
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -322,9 +317,8 @@ RPMTEST_CLEANUP
 
 # ------------------------------
 # noreplace variants of the same
-AT_SETUP([upgrade changing config(noreplace)])
+RPMTEST_SETUP_RW([upgrade changing config(noreplace)])
 AT_KEYWORDS([install])
-RPMDB_INIT
 for v in "1.0" "2.0"; do
     runroot rpmbuild --quiet -bb \
         --define "ver $v" \
@@ -335,7 +329,7 @@ done
 
 # Upgrade package with unmodified config file, changed in pkg
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -352,7 +346,7 @@ foo-2.0
 
 # Upgrade package with locally modified config file, changed in pkg
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -375,7 +369,7 @@ foo-2.0
 
 # Modified config file matches the content from new package.
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -396,9 +390,8 @@ RPMTEST_CLEANUP
 
 # Shared config file variants of the same cases
 # ------------------------------
-AT_SETUP([upgrade shared config])
+RPMTEST_SETUP_RW([upgrade shared config])
 AT_KEYWORDS([install])
-RPMDB_INIT
 for s in "A" "B"; do
     for v in "1.0" "2.0"; do
         runroot rpmbuild --quiet -bb \
@@ -411,7 +404,7 @@ done
 
 # Upgrade package with config file, no backup here
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -432,7 +425,7 @@ foo
 
 # Upgrade package with locally modified config file, unchanged in pkg
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -456,9 +449,8 @@ otherstuff
 RPMTEST_CLEANUP
 
 # ------------------------------
-AT_SETUP([upgrade changing shared config])
+RPMTEST_SETUP_RW([upgrade changing shared config])
 AT_KEYWORDS([install])
-RPMDB_INIT
 for s in "A" "B"; do
     for v in "1.0" "2.0"; do
         runroot rpmbuild --quiet -bb \
@@ -471,7 +463,7 @@ done
 
 # Upgrade package with unmodified config file, changed in pkg
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -492,7 +484,7 @@ foo-2.0
 
 # Upgrade package with locally modified config file, changed in pkg
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -519,7 +511,7 @@ otherstuff
 
 # Modified config file matches the content from new package.
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -545,9 +537,8 @@ RPMTEST_CLEANUP
 # Shared config(noreplace) variants of the more interesting cases
 # ------------------------------
 # Upgrade package with locally modified config file, changed in pkg.
-AT_SETUP([upgrade shared config(noreplace)])
+RPMTEST_SETUP_RW([upgrade shared config(noreplace)])
 AT_KEYWORDS([install])
-RPMDB_INIT
 
 for s in "A" "B"; do
     for v in "1.0" "2.0"; do
@@ -561,7 +552,7 @@ for s in "A" "B"; do
 done
 
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -589,7 +580,7 @@ foo-2.0
 # ------------------------------
 # Modified config file matches the content from new package.
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 
@@ -614,10 +605,9 @@ RPMTEST_CLEANUP
 
 ---------
 # Test pre-existing and post-install config ghost survival and erasure
-AT_SETUP([ghost config])
+RPMTEST_SETUP_RW([ghost config])
 AT_KEYWORDS([install])
 RPMTEST_CHECK([
-RPMDB_INIT
 cf="${RPMTEST}"/etc/my.conf
 rm -rf "${cf}"*
 

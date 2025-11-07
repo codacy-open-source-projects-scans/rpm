@@ -1,5 +1,9 @@
 #include "system.h"
 
+#include <format>
+#include <string>
+#include <vector>
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -10,7 +14,6 @@
 #include <gelf.h>
 
 #include <rpm/rpmstring.h>
-#include <rpm/argv.h>
 
 int soname_only = 0;
 int fake_soname = 1;
@@ -18,7 +21,7 @@ int filter_soname = 1;
 int require_interp = 0;
 int multifile = 0;
 
-typedef struct elfInfo_s {
+struct elfInfo {
     Elf *elf;
 
     int isDSO;
@@ -26,13 +29,13 @@ typedef struct elfInfo_s {
     int gotDEBUG;
     int gotHASH;
     int gotGNUHASH;
-    char *soname;
-    char *interp;
-    const char *marker;		/* elf class marker or NULL */
+    std::string soname;
+    std::string interp;
+    std::string marker;		/* elf class marker */
 
-    ARGV_t requires;
-    ARGV_t provides;
-} elfInfo;
+    std::vector<std::string> requires_;
+    std::vector<std::string> provides;
+};
 
 /*
  * Rough soname sanity filtering: all sane soname's dependencies need to
@@ -41,47 +44,38 @@ typedef struct elfInfo_s {
  * and common exception is the dynamic linker itself, which we allow
  * here, the rest can use --no-filter-soname.
  */
-static int skipSoname(const char *soname)
+static bool skipSoname(const std::string & soname)
 {
-    int sane = 0;
-
     /* Filter out empty and all-whitespace sonames */
-    for (const char *s = soname; *s != '\0'; s++) {
-	if (!risspace(*s)) {
-	    sane = 1;
-	    break;
-	}
-    }
+    if (soname.empty())
+	return true;
 
-    if (!sane)
-	return 1;
+    if (soname.find_first_not_of(" \t\n\r\f\v") == std::string::npos)
+	return true;
 
     if (filter_soname) {
-	if (!strstr(soname, ".so"))
-	    return 1;
+	if (soname.find(".so") == std::string::npos)
+	    return true;
 
-	if (rstreqn(soname, "ld.", 3) || rstreqn(soname, "ld-", 3) ||
-	    rstreqn(soname, "ld64.", 3) || rstreqn(soname, "ld64-", 3))
-	    return 0;
-
-	if (rstreqn(soname, "lib", 3))
-	    return 0;
-	else
-	    return 1;
+	const auto keep = { "ld.", "ld-", "ld64.", "ld64-", "lib" };
+	for (auto & prefix : keep) {
+	    if (soname.starts_with(prefix))
+		return false;
+	}
+	return true;
     }
 
-    return 0;
+    return false;
 }
 
 static int genRequires(elfInfo *ei)
 {
-    return !(ei->interp && ei->isExec == 0);
+    return !(ei->interp.empty() == false && ei->isExec == 0);
 }
 
-static const char *mkmarker(GElf_Ehdr *ehdr)
+static std::string mkmarker(GElf_Ehdr *ehdr)
 {
-    const char *marker = NULL;
-
+    std::string marker;
     if (ehdr->e_ident[EI_CLASS] == ELFCLASS64) {
 	switch (ehdr->e_machine) {
 	case EM_ALPHA:
@@ -96,27 +90,31 @@ static const char *mkmarker(GElf_Ehdr *ehdr)
     return marker;
 }
 
-static void addDep(ARGV_t *deps,
-		   const char *soname, const char *ver, const char *marker)
+static void addDep(std::vector<std::string> & deps, const std::string & dep)
 {
-    char *dep = NULL;
+    deps.push_back(dep);
+}
 
+static void addSoDep(std::vector<std::string> & deps,
+		     const std::string & soname,
+		     const std::string & ver, const std::string & marker)
+{
     if (skipSoname(soname))
 	return;
 
-    if (ver || marker) {
-	rasprintf(&dep,
-		  "%s(%s)%s", soname, ver ? ver : "", marker ? marker : "");
+    if (ver.empty() && marker.empty()) {
+	addDep(deps, soname);
+    } else {
+	auto dep = std::format("{}({}){}", soname, ver, marker);
+	addDep(deps, dep);
     }
-    argvAdd(deps, dep ? dep : soname);
-    free(dep);
 }
 
 static void processVerDef(Elf_Scn *scn, GElf_Shdr *shdr, elfInfo *ei)
 {
     Elf_Data *data = NULL;
     unsigned int offset, auxoffset;
-    char *soname = NULL;
+    std::string soname;
 
     while ((data = elf_getdata(scn, data)) != NULL) {
 	offset = 0;
@@ -139,24 +137,22 @@ static void processVerDef(Elf_Scn *scn, GElf_Shdr *shdr, elfInfo *ei)
 		if (s == NULL)
 		    break;
 		if (def->vd_flags & VER_FLG_BASE) {
-		    rfree(soname);
-		    soname = rstrdup(s);
+		    soname = s;
 		    auxoffset += aux->vda_next;
 		    continue;
-		} else if (soname && !soname_only) {
-		    addDep(&ei->provides, soname, s, ei->marker);
+		} else if (!soname_only) {
+		    addSoDep(ei->provides, soname, s, ei->marker);
 		}
 	    }
 		    
 	}
     }
-    rfree(soname);
 }
 
 static void processVerNeed(Elf_Scn *scn, GElf_Shdr *shdr, elfInfo *ei)
 {
     Elf_Data *data = NULL;
-    char *soname = NULL;
+    std::string soname;
     while ((data = elf_getdata(scn, data)) != NULL) {
 	unsigned int offset = 0, auxoffset;
 	for (int i = shdr->sh_info; --i >= 0; ) {
@@ -169,8 +165,7 @@ static void processVerNeed(Elf_Scn *scn, GElf_Shdr *shdr, elfInfo *ei)
 	    s = elf_strptr(ei->elf, shdr->sh_link, need->vn_file);
 	    if (s == NULL)
 		break;
-	    rfree(soname);
-	    soname = rstrdup(s);
+	    soname = s;
 	    auxoffset = offset + need->vn_aux;
 
 	    for (int j = need->vn_cnt; --j >= 0; ) {
@@ -182,15 +177,14 @@ static void processVerNeed(Elf_Scn *scn, GElf_Shdr *shdr, elfInfo *ei)
 		if (s == NULL)
 		    break;
 
-		if (genRequires(ei) && soname && !soname_only) {
-		    addDep(&ei->requires, soname, s, ei->marker);
+		if (genRequires(ei) && !soname_only) {
+		    addSoDep(ei->requires_, soname, s, ei->marker);
 		}
 		auxoffset += aux->vna_next;
 	    }
 	    offset += need->vn_next;
 	}
     }
-    rfree(soname);
 }
 
 static void processDynamic(Elf_Scn *scn, GElf_Shdr *shdr, elfInfo *ei)
@@ -199,7 +193,7 @@ static void processDynamic(Elf_Scn *scn, GElf_Shdr *shdr, elfInfo *ei)
     if (shdr->sh_entsize == 0)
 	return;
     while ((data = elf_getdata(scn, data)) != NULL) {
-	for (int i = 0; i < (shdr->sh_size / shdr->sh_entsize); i++) {
+	for (unsigned i = 0; i < (shdr->sh_size / shdr->sh_entsize); i++) {
 	    const char *s = NULL;
 	    GElf_Dyn dyn_mem, *dyn;
 
@@ -220,13 +214,13 @@ static void processDynamic(Elf_Scn *scn, GElf_Shdr *shdr, elfInfo *ei)
 	    case DT_SONAME:
 		s = elf_strptr(ei->elf, shdr->sh_link, dyn->d_un.d_val);
 		if (s)
-		    ei->soname = rstrdup(s);
+		    ei->soname = s;
 		break;
 	    case DT_NEEDED:
 		if (genRequires(ei)) {
 		    s = elf_strptr(ei->elf, shdr->sh_link, dyn->d_un.d_val);
 		    if (s)
-			addDep(&ei->requires, s, NULL, ei->marker);
+			addSoDep(ei->requires_, s, "", ei->marker);
 		}
 		break;
 	    }
@@ -270,7 +264,7 @@ static void processProgHeaders(elfInfo *ei, GElf_Ehdr *ehdr)
 	    char * filedata = elf_rawfile(ei->elf, &maxsize);
 
 	    if (filedata && phdr->p_offset < maxsize) {
-		ei->interp = rstrdup(filedata + phdr->p_offset);
+		ei->interp = filedata + phdr->p_offset;
 		break;
 	    }
 	}
@@ -283,8 +277,8 @@ static int processFile(const char *fn, int dtype)
     int fdno;
     struct stat st;
     GElf_Ehdr *ehdr, ehdr_mem;
-    elfInfo *ei = (elfInfo *)rcalloc(1, sizeof(*ei));
-    ARGV_t dep = NULL;
+    elfInfo *ei = new elfInfo {};
+    auto const & dep = dtype ? ei->requires_ : ei->provides;
 
     fdno = open(fn, O_RDONLY);
     if (fdno < 0 || fstat(fdno, &st) < 0)
@@ -313,7 +307,7 @@ static int processFile(const char *fn, int dtype)
      * section, we need to ensure that we have a new enough glibc.
      */
     if (genRequires(ei) && ei->gotGNUHASH && !ei->gotHASH && !soname_only) {
-	argvAdd(&ei->requires, "rtld(GNU_HASH)");
+	addDep(ei->requires_, "rtld(GNU_HASH)");
     }
 
     /*
@@ -322,37 +316,32 @@ static int processFile(const char *fn, int dtype)
      * check is used to avoid adding basename provides for PIE executables.
      */
     if (ei->isDSO && !ei->gotDEBUG) {
-	if (!ei->soname && fake_soname) {
+	if (ei->soname.empty() && fake_soname) {
 	    const char *bn = strrchr(fn, '/');
-	    ei->soname = rstrdup(bn ? bn + 1 : fn);
+	    ei->soname = bn ? bn + 1 : fn;
 	}
-	if (ei->soname)
-	    addDep(&ei->provides, ei->soname, NULL, ei->marker);
+	if (ei->soname.empty() == false)
+	    addSoDep(ei->provides, ei->soname, "", ei->marker);
     }
 
     /* If requested and present, add dep for interpreter (ie dynamic linker) */
-    if (ei->interp && require_interp)
-	argvAdd(&ei->requires, ei->interp);
+    if (ei->interp.empty() == false && require_interp)
+	addDep(ei->requires_, ei->interp);
 
     rc = 0;
     /* dump the requested dependencies for this file */
-    dep = dtype ? ei->requires : ei->provides;
-    if (dep && *dep) {
+    if (dep.empty() == false) {
 	if (multifile)
 	    fprintf(stdout, ";%s\n", fn);
-	for (; dep && *dep; dep++)
-	    fprintf(stdout, "%s\n", *dep);
+	for (auto const & d : dep)
+	    fprintf(stdout, "%s\n", d.c_str());
     }
 
 exit:
     if (fdno >= 0) close(fdno);
     if (ei) {
-	argvFree(ei->provides);
-	argvFree(ei->requires);
-	free(ei->soname);
-	free(ei->interp);
     	if (ei->elf) elf_end(ei->elf);
-	rfree(ei);
+	delete ei;
     }
     return rc;
 }
@@ -361,12 +350,12 @@ int main(int argc, char *argv[])
 {
     int rc = 0;
     int provides = 0;
-    int requires = 0;
+    int requires_ = 0;
     poptContext optCon;
 
     struct poptOption opts[] = {
 	{ "provides", 'P', POPT_ARG_VAL, &provides, -1, NULL, NULL },
-	{ "requires", 'R', POPT_ARG_VAL, &requires, -1, NULL, NULL },
+	{ "requires", 'R', POPT_ARG_VAL, &requires_, -1, NULL, NULL },
 	{ "soname-only", 0, POPT_ARG_VAL, &soname_only, -1, NULL, NULL },
 	{ "no-fake-soname", 0, POPT_ARG_VAL, &fake_soname, 0, NULL, NULL },
 	{ "no-filter-soname", 0, POPT_ARG_VAL, &filter_soname, 0, NULL, NULL },
@@ -388,14 +377,14 @@ int main(int argc, char *argv[])
     if (poptPeekArg(optCon)) {
 	const char *fn;
 	while ((fn = poptGetArg(optCon)) != NULL) {
-	    if (processFile(fn, requires))
+	    if (processFile(fn, requires_))
 		rc = EXIT_FAILURE;
 	}
     } else {
 	char fn[BUFSIZ];
 	while (fgets(fn, sizeof(fn), stdin) != NULL) {
 	    fn[strlen(fn)-1] = '\0';
-	    if (processFile(fn, requires))
+	    if (processFile(fn, requires_))
 		rc = EXIT_FAILURE;
 	}
     }

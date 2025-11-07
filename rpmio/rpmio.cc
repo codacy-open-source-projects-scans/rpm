@@ -237,7 +237,7 @@ off_t fdSize(FD_t fd)
     struct stat sb;
     off_t rc = -1; 
 
-    if (fd != NULL && fstat(Fileno(fd), &sb) == 0)
+    if (fd != NULL && fstat(Fileno(fd), &sb) == 0 && S_ISREG(sb.st_mode))
 	rc = sb.st_size;
     return rc;
 }
@@ -462,6 +462,7 @@ static FD_t urlOpen(const char * url, int flags, mode_t mode)
 	unlink(dest);
     } else {
 	fd = NULL;
+	errno = ENOENT;
     }
     dest = _free(dest);
 

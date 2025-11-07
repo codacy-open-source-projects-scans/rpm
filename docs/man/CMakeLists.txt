@@ -1,10 +1,14 @@
 set(core
-	gendiff.1 rpm2cpio.8
-	rpm.8 rpmbuild.8 rpmdb.8 rpmkeys.8 rpmsign.8 rpmspec.8
-	rpmdeps.8 rpmgraph.8 rpmlua.8 rpm-misc.8 rpmsort.8
+	elfdeps.1 gendiff.1 rpm2cpio.1 rpm2archive.1 rpmuncompress.1
+	rpm.8 rpmbuild.1 rpmdb.8 rpmkeys.8 rpmsign.1 rpmspec.1
+	rpmdeps.1 rpmgraph.1 rpmlua.1 rpm-common.8 rpmsort.1
+	rpm-macrofile.5 rpm-config.5 rpm-rpmrc.5 rpm-setup-autosign.1
+	rpm-payloadflags.7 rpmbuild-config.5 rpm-queryformat.7 rpm-macros.7
+	rpm-lua.7 rpm-manifest.5 rpm-version.7 rpm-dependency-generators.7
+	rpm-scriptlets.7 rpm-design.7
 )
 set(extra
-	rpm2archive.8 rpm-plugins.8 rpm-plugin-prioreset.8 rpm-plugin-syslog.8
+	rpm-plugins.8 rpm-plugin-prioreset.8 rpm-plugin-syslog.8
 	rpm-plugin-audit.8 rpm-plugin-dbus-announce.8
 	rpm-plugin-systemd-inhibit.8 rpm-plugin-fapolicyd.8 rpm-plugin-ima.8
 	rpm-plugin-selinux.8 rpm-plugin-unshare.8
@@ -12,20 +16,31 @@ set(extra
 
 # Build all manuals
 set(manuals ${core} ${extra})
-if (PANDOC)
+foreach(man ${manuals})
+	add_custom_command(OUTPUT ${man} COMMAND
+			sed '1 s/$$/ \"RPM ${CMAKE_PROJECT_VERSION}\"/'
+			< ${CMAKE_CURRENT_SOURCE_DIR}/${man}.scd | ${SCDOC}
+			> ${man} DEPENDS ${man}.scd)
+endforeach()
+add_custom_target(man ALL DEPENDS ${manuals})
+
+# Render Jekyll-ready HTML pages from the manuals
+if (SCD2HTML)
+	configure_file(mkpage.in mkpage @ONLY)
+	set(manuals_html "")
 	foreach(man ${manuals})
-		add_custom_command(OUTPUT ${man} COMMAND ${PANDOC}
-				${CMAKE_CURRENT_SOURCE_DIR}/${man}.md
-				-s -t man -o ${man} DEPENDS ${man}.md)
+		set(file ${site_dir}/man/${man}.html)
+		list(APPEND manuals_html ${file})
+		add_custom_command(OUTPUT ${file} COMMAND ./mkpage
+				${CMAKE_CURRENT_SOURCE_DIR}/${man}.scd ${file}
+				DEPENDS ${man}.scd mkpage)
 	endforeach()
-	add_custom_target(man ALL DEPENDS ${manuals})
+	add_custom_target(clidoc DEPENDS ${manuals_html})
+	add_dependencies(pages clidoc)
 endif()
 
 # Install manuals for the enabled features
 set(manuals ${core})
-if (WITH_ARCHIVE)
-	list(APPEND manuals rpm2archive.8)
-endif()
 if (ENABLE_PLUGINS)
 	list(APPEND manuals rpm-plugins.8
 		rpm-plugin-prioreset.8 rpm-plugin-syslog.8)
@@ -50,20 +65,9 @@ if (ENABLE_PLUGINS)
 	endif()
 endif()
 foreach(man ${manuals})
-	unset(fn)
-	if (PANDOC)
-		set(fn ${CMAKE_CURRENT_BINARY_DIR}/${man})
-	elseif (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${man})
-		# dist tarballs have pre-built manuals in the source dir
-		set(fn ${CMAKE_CURRENT_SOURCE_DIR}/${man})
-	endif()
-	if (fn)
-		get_filename_component(ext ${fn} EXT)
-		string(REPLACE "." "man" section ${ext})
-		install(FILES ${fn}
-			DESTINATION ${CMAKE_INSTALL_MANDIR}/${section})
-	endif()
+	set(fn ${CMAKE_CURRENT_BINARY_DIR}/${man})
+	get_filename_component(ext ${fn} EXT)
+	string(REPLACE "." "man" section ${ext})
+	install(FILES ${fn}
+		DESTINATION ${CMAKE_INSTALL_MANDIR}/${section})
 endforeach()
-if (NOT fn)
-	message(WARNING "pandoc not available and not a dist tarball, man pages not available")
-endif()

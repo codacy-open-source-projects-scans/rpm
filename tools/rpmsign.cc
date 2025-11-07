@@ -5,6 +5,7 @@
 
 #include <popt.h>
 #include <rpm/rpmcli.h>
+#include <rpm/rpmlog.h>
 #include <rpm/rpmsign.h>
 #include "cliutils.hh"
 #include "debug.h"
@@ -32,9 +33,9 @@ static struct rpmSignArgs sargs;
 
 static struct poptOption signOptsTable[] = {
     { "addsign", '\0', (POPT_ARG_VAL|POPT_ARGFLAG_OR), &mode, MODE_ADDSIGN,
-	N_("sign package(s)"), NULL },
+	N_("sign package(s), adding a new signature"), NULL },
     { "resign", '\0', (POPT_ARG_VAL|POPT_ARGFLAG_OR), &mode, MODE_RESIGN,
-	N_("sign package(s) (identical to --addsign)"), NULL },
+	N_("resign package(s), deleting any previous signatures"), NULL },
     { "delsign", '\0', (POPT_ARG_VAL|POPT_ARGFLAG_OR), &mode, MODE_DELSIGN,
 	N_("delete package signatures"), NULL },
 #if defined(WITH_IMAEVM) || defined(WITH_FSVERITY)
@@ -182,6 +183,8 @@ static int doSign(poptContext optCon, struct rpmSignArgs *sargs)
     while ((arg = poptGetArg(optCon)) != NULL) {
 	if (rpmPkgSign(arg, sargs) < 0)
 	    rc++;
+	else
+	    rpmlog(RPMLOG_INFO, "%s\n", arg);
     }
 
 exit:
@@ -224,6 +227,8 @@ int main(int argc, char *argv[])
 	while ((arg = poptGetArg(optCon)) != NULL) {
 	    if (rpmPkgDelSign(arg, &sargs) < 0)
 		ec++;
+	    else
+		rpmlog(RPMLOG_INFO, "%s\n", arg);
 	}
 	break;
     case MODE_DELFILESIGN:
@@ -231,6 +236,8 @@ int main(int argc, char *argv[])
 	while ((arg = poptGetArg(optCon)) != NULL) {
 	    if (rpmPkgDelFileSign(arg, &sargs) < 0)
 		ec++;
+	    else
+		rpmlog(RPMLOG_INFO, "%s\n", arg);
 	}
 	break;
     case MODE_NONE:

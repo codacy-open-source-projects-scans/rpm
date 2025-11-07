@@ -40,8 +40,13 @@ static const struct vfytag_s rpmvfytags[] = {
     {	RPMSIGTAG_LONGSIZE,		RPM_INT64_TYPE,		1,	8, },
     {	RPMSIGTAG_LONGARCHIVESIZE,	RPM_INT64_TYPE,		1,	8, },
     {	RPMTAG_SHA256HEADER,		RPM_STRING_TYPE,	1,	65, },
-    {	RPMTAG_PAYLOADDIGEST,		RPM_STRING_ARRAY_TYPE,	0,	0, },
-    {	RPMTAG_PAYLOADDIGESTALT,	RPM_STRING_ARRAY_TYPE,	0,	0, },
+    {	RPMTAG_SHA3_256HEADER,		RPM_STRING_TYPE,	1,	65, },
+    {	RPMTAG_PAYLOADSHA256,		RPM_STRING_ARRAY_TYPE,	0,	0, },
+    {	RPMTAG_PAYLOADSHA256ALT,	RPM_STRING_ARRAY_TYPE,	0,	0, },
+    {	RPMTAG_PAYLOADSHA512,		RPM_STRING_TYPE,	0,	0, },
+    {	RPMTAG_PAYLOADSHA512ALT,	RPM_STRING_TYPE,	0,	0, },
+    {	RPMTAG_PAYLOADSHA3_256,		RPM_STRING_TYPE,	0,	0, },
+    {	RPMTAG_PAYLOADSHA3_256ALT,	RPM_STRING_TYPE,	0,	0, },
     { 0 } /* sentinel */
 };
 
@@ -91,12 +96,27 @@ static const struct vfyinfo_s rpmvfyitems[] = {
     {	RPMTAG_SHA256HEADER,		1,
 	{ RPMSIG_DIGEST_TYPE,		RPMVSF_NOSHA256HEADER,
 	(RPMSIG_HEADER),		RPM_HASH_SHA256, 0, }, },
-    {	RPMTAG_PAYLOADDIGEST,		0,
-	{ RPMSIG_DIGEST_TYPE,		RPMVSF_NOPAYLOAD,
+    {	RPMTAG_SHA3_256HEADER,		1,
+	{ RPMSIG_DIGEST_TYPE,		RPMVSF_NOSHA3_256HEADER,
+	(RPMSIG_HEADER),		RPM_HASH_SHA3_256, 0, }, },
+    {	RPMTAG_PAYLOADSHA256,		0,
+	{ RPMSIG_DIGEST_TYPE,		RPMVSF_NOSHA256PAYLOAD,
 	(RPMSIG_PAYLOAD),		RPM_HASH_SHA256, 0, }, },
-    {	RPMTAG_PAYLOADDIGESTALT,	0,
-	{ RPMSIG_DIGEST_TYPE,		RPMVSF_NOPAYLOAD,
+    {	RPMTAG_PAYLOADSHA256ALT,	0,
+	{ RPMSIG_DIGEST_TYPE,		RPMVSF_NOSHA256PAYLOAD,
 	(RPMSIG_PAYLOAD),		RPM_HASH_SHA256, 0, 1, }, },
+    {	RPMTAG_PAYLOADSHA512,		0,
+	{ RPMSIG_DIGEST_TYPE,		RPMVSF_NOSHA512PAYLOAD,
+	(RPMSIG_PAYLOAD),		RPM_HASH_SHA512, 0, }, },
+    {	RPMTAG_PAYLOADSHA512ALT,	0,
+	{ RPMSIG_DIGEST_TYPE,		RPMVSF_NOSHA512PAYLOAD,
+	(RPMSIG_PAYLOAD),		RPM_HASH_SHA512, 0, 1, }, },
+    {	RPMTAG_PAYLOADSHA3_256,		0,
+	{ RPMSIG_DIGEST_TYPE,		RPMVSF_NOSHA3_256PAYLOAD,
+	(RPMSIG_PAYLOAD),		RPM_HASH_SHA3_256, 0, }, },
+    {	RPMTAG_PAYLOADSHA3_256ALT,	0,
+	{ RPMSIG_DIGEST_TYPE,		RPMVSF_NOSHA3_256PAYLOAD,
+	(RPMSIG_PAYLOAD),		RPM_HASH_SHA3_256, 0, 1, }, },
     { 0 } /* sentinel */
 };
 
@@ -417,10 +437,21 @@ void rpmvsInit(struct rpmvs_s *vs, hdrblob blob, rpmDigestBundle bundle)
 {
     const struct vfyinfo_s *si = &rpmvfyitems[0];
     const struct vfytag_s *ti = &rpmvfytags[0];
+    int ignore_legacy = 0;
+
+    /* Heuristics for rpm v6 and newer */
+    if (hdrblobIsEntry(blob, RPMSIGTAG_RESERVED) &&
+	hdrblobIsEntry(blob, RPMSIGTAG_SHA3_256))
+    {
+	ignore_legacy = 1;
+    }
 
     for (; si->tag && ti->tag; si++, ti++) {
 	/* Ignore non-signature tags initially */
 	if (!si->sigh)
+	    continue;
+	/* Ignore legacy tags in the conflicting range? */
+	if (ignore_legacy && ti->tag >= HEADER_TAGBASE)
 	    continue;
 	rpmvsAppend(vs, blob, si, ti);
     }
@@ -445,8 +476,18 @@ void rpmvsInitRange(struct rpmvs_s *sis, int range)
     for (int i = 0; i < sis->nsigs; i++) {
 	struct rpmsinfo_s *sinfo = &sis->sigs[i];
 	if (sinfo->range & range) {
-	    if (sinfo->rc == RPMRC_OK)
-		rpmDigestBundleAddID(sis->bundle, sinfo->hashalgo, sinfo->id, 0);
+	    if (sinfo->rc != RPMRC_OK)
+		continue;
+
+	    rpmDigestBundleAddID(sis->bundle, sinfo->hashalgo, sinfo->id, 0);
+	    /* OpenPGP v6 signatures need a grain of salt to go */
+	    if (sinfo->type == RPMSIG_SIGNATURE_TYPE && sinfo->sig) {
+		const uint8_t *salt = NULL;
+		size_t slen = 0;
+		if (pgpDigParamsSalt(sinfo->sig, &salt, &slen) == 0 && salt) {
+		    rpmDigestBundleUpdateID(sis->bundle, sinfo->id, salt, slen);
+		}
+	    }
 	}
     }
 }
@@ -555,8 +596,8 @@ int rpmvsVerify(struct rpmvs_s *sis, int type,
 	int strength = (sinfo->type | sinfo->strength);
 	int required = 0;
 
-	/* Ignore failure if an alternative exists and verifies ok */
-	if (sinfo->rc == RPMRC_FAIL) {
+	/* Ignore a digest failure if an alternative exists and verifies ok */
+	if (sinfo->type == RPMSIG_DIGEST_TYPE && sinfo->rc == RPMRC_FAIL) {
 	    const struct rpmsinfo_s * alt = getAlt(sis, sinfo);
 	    if (alt && alt->rc == RPMRC_OK)
 		sinfo->rc = RPMRC_NOTFOUND;

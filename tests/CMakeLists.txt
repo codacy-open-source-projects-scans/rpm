@@ -28,8 +28,10 @@ set(TESTSUITE_AT
 	rpmgeneral.at
 	rpmvercmp.at
 	rpmmacro.at
+	rpmapi.at
 	rpmdevel.at
 	rpmpython.at
+	rpmpython2.at
 	rpmdepmatch.at
 	rpmquery.at
 	rpmspec.at
@@ -60,10 +62,10 @@ foreach(at ${TESTSUITE_AT})
 	FILE(APPEND ${CMAKE_CURRENT_BINARY_DIR}/rpmtests.at "m4_include([${at}])\n")
 endforeach()
 
-set(TESTPROGS rpmpgpcheck rpmpgppubkeyfingerprint)
+set(TESTPROGS rpmpgpcheck rpmpgppubkeyfingerprint readpkgnullts rpmdig)
 foreach(prg ${TESTPROGS})
 	add_executable(${prg} EXCLUDE_FROM_ALL ${prg}.c)
-	target_link_libraries(${prg} PRIVATE librpmio)
+	target_link_libraries(${prg} PRIVATE librpm)
 endforeach()
 string(REPLACE ";" " " TESTPROG_NAMES "${TESTPROGS}")
 
@@ -90,6 +92,7 @@ if (MKTREE_BACKEND STREQUAL oci)
 		add_custom_target(ci
 			COMMAND ./mktree.oci build
 			COMMAND ./mktree.oci check ${JOBS} $(TESTOPTS)
+			COMMAND ./mktree.oci clean
 			WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 		)
 	else()
@@ -106,6 +109,7 @@ message(STATUS "Using mktree backend: ${MKTREE_BACKEND} "
 	       "(native: ${MKTREE_NATIVE})")
 configure_file(mktree.common mktree.common @ONLY)
 configure_file(mktree.${MKTREE_BACKEND} mktree @ONLY)
+configure_file(setup.sh setup.sh @ONLY)
 
 if (MKTREE_NATIVE)
 	find_program(AUTOM4TE autom4te REQUIRED)
@@ -134,6 +138,7 @@ endif()
 
 add_custom_target(atshell
 	COMMAND ./mktree atshell ||:
+	COMMAND ./mktree clean
 	DEPENDS tree
 )
 
@@ -142,16 +147,19 @@ add_custom_target(pinned
 	COMMAND cp pinned/*.txt ${PINNED_DIR}/
 	COMMAND git add ${PINNED_DIR}/*.txt
 	COMMAND git diff --staged ${PINNED_DIR}/*.txt
+	COMMAND ./mktree clean
 	DEPENDS tree
 )
 
 add_custom_target(shell
 	COMMAND ./mktree shell ||:
+	COMMAND ./mktree clean
 	DEPENDS tree
 )
 
 add_custom_target(check
 	COMMAND ./mktree check ${JOBS} $(TESTOPTS)
+	COMMAND ./mktree clean
 	DEPENDS tree
 )
 

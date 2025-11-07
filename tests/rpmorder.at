@@ -1,8 +1,7 @@
 AT_BANNER([RPM install/erase ordering])
 
-AT_SETUP([basic install/erase order 1])
+RPMTEST_SETUP_RW([basic install/erase order 1])
 AT_KEYWORDS([install erase order])
-RPMDB_INIT
 
 runroot rpmbuild --quiet -bb \
 	--define "pkg one" \
@@ -47,9 +46,8 @@ deptest-three-1.0-1.noarch
 RPMTEST_CLEANUP
 
 # same as above but with mixed weak dependencies
-AT_SETUP([basic install/erase order 2])
+RPMTEST_SETUP_RW([basic install/erase order 2])
 AT_KEYWORDS([install erase order])
-RPMDB_INIT
 
 runroot rpmbuild --quiet -bb \
 	--define "pkg one" \
@@ -96,9 +94,8 @@ RPMTEST_CLEANUP
 # same as above but with all weak reverse dependencies
 # these are all considered meta by ordering, so order is simply reverse
 # of the cli
-AT_SETUP([basic install/erase order 3])
+RPMTEST_SETUP_RW([basic install/erase order 3])
 AT_KEYWORDS([install erase order])
-RPMDB_INIT
 
 runroot rpmbuild --quiet -bb \
 	--define "pkg one" \
@@ -140,4 +137,38 @@ deptest-one-1.0-1.noarch
 deptest-three-1.0-1.noarch
 ],
 [])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP_RW([rpmgraph])
+AT_KEYWORDS([rpmgraph order])
+
+RPMTEST_CHECK([
+runroot rpmgraph /data/RPMS/foo-1.0-1.noarch.rpm
+],
+[0],
+[[digraph XXX {
+  rankdir=LR
+//===== Packages:
+  "foo"
+  { rank=max ; "foo" }
+}
+]],
+[])
+
+RPMTEST_CHECK([
+runroot rpmgraph /data/RPMS/hello-2.0-1.x86_64-corrupted.rpm
+],
+[0],
+[],
+[warning: /data/RPMS/hello-2.0-1.x86_64-corrupted.rpm: Header OpenPGP V4 RSA/SHA256 signature, key ID 4344591e1964c5fc: NOKEY
+error: /data/RPMS/hello-2.0-1.x86_64-corrupted.rpm cannot be installed
+])
+
+RPMTEST_CHECK([
+runroot rpmgraph /data/RPMS/notthere.rpm
+],
+[0],
+[],
+[error: open of /data/RPMS/notthere.rpm failed: No such file or directory
+])
 RPMTEST_CLEANUP

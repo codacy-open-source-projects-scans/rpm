@@ -17,6 +17,7 @@
 #include <stdarg.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <glob.h>
 
 #include <rpm/rpmio.h>
 #include <rpm/rpmmacro.h>
@@ -38,6 +39,7 @@ int _rpmlua_have_forked = 0;
 
 struct rpmlua_s {
     lua_State *L;
+    std::stack<FILE *> out;
     std::stack<std::string> printbuf;
 };
 
@@ -112,6 +114,7 @@ rpmlua rpmluaNew()
 
     lua = new rpmlua_s {};
     lua->L = L;
+    lua->out.push(stdout);
 
     for (lib = extlibs; lib->name; lib++) {
 	luaL_requiref(L, lib->name, lib->func, 1);
@@ -169,6 +172,20 @@ void * rpmluaGetLua(rpmlua lua)
 {
     INITSTATE(lua);
     return lua->L;
+}
+
+void rpmluaPushOutstream(rpmlua lua, FILE *stream)
+{
+    INITSTATE(lua);
+    lua->out.push(stream);
+}
+
+void rpmluaPopOutstream(rpmlua lua)
+{
+    INITSTATE(lua);
+    /* Ensure stdout remains */
+    if (lua->out.size() > 1)
+	lua->out.pop();
 }
 
 void rpmluaPushPrintBuffer(rpmlua lua)
@@ -744,13 +761,13 @@ static int rpm_print (lua_State *L)
 	    buf += s;
 	} else {
 	    if (i > 1)
-		(void) fputs("\t", stdout);
-	    (void) fputs(s, stdout);
+		(void) fputs("\t", lua->out.top());
+	    (void) fputs(s, lua->out.top());
 	}
 	lua_pop(L, 1);  /* pop result */
     }
     if (lua->printbuf.empty()) {
-	(void) fputs("\n", stdout);
+	(void) fputs("\n", lua->out.top());
     }
     return 0;
 }
@@ -759,7 +776,7 @@ static int rpm_redirect2null(lua_State *L)
 {
     int target_fd, fd, r, e;
 
-    check_deprecated(L, "rpm.redirect2null", "4.20.0");
+    check_deprecated(L, "rpm.redirect2null", "4.20.0", "5.99.0");
 
     if (!_rpmlua_have_forked)
 	return luaL_error(L, "redirect2null not permitted in this context");
@@ -937,19 +954,21 @@ static int rpm_glob(lua_State *L)
     const char *pat = luaL_checkstring(L, 1);
     rpmglobFlags flags = RPMGLOB_NONE;
     int argc = 0;
+    int rc = 0;
     ARGV_t argv = NULL;
 
-    if (luaL_optstring(L, 2, "c"))
+    if (strchr(luaL_optstring(L, 2, ""), 'c'))
 	flags |= RPMGLOB_NOCHECK;
 
-    if (rpmGlobPath(pat, flags, &argc, &argv) == 0) {
+    rc = rpmGlobPath(pat, flags, &argc, &argv);
+    if (rc == 0) {
 	lua_createtable(L, 0, argc);
 	for (int i = 0; i < argc; i++) {
 	    lua_pushstring(L, argv[i]);
 	    lua_rawseti(L, -2, i + 1);
 	}
 	argvFree(argv);
-    } else {
+    } else if (rc != GLOB_NOMATCH) {
 	luaL_error(L, "glob %s failed: %s", pat, strerror(errno));
     }
 
@@ -1365,19 +1384,38 @@ static int luaopen_rpm(lua_State *L)
     return 1;
 }
 
-void check_deprecated(lua_State *L, const char *func, const char *deprecated_in)
+void check_deprecated(lua_State *L, const char *func,
+		      const char *deprecated_in, const char *removed_in)
 {
-    int warn = 1;
+    int err = 1;
+    const char *rpmversion = NULL;
     lua_getfield(L, LUA_REGISTRYINDEX, "RPM_PACKAGE_RPMVERSION");
-    if (lua_isstring(L, -1)) {
-	rpmver v1 = rpmverParse(lua_tostring(L, -1));
-	rpmver v2 = rpmverParse(deprecated_in);
-	if (v1 && v2 && rpmverCmp(v1, v2) < 0)
-	    warn = 0;
+    if (lua_isstring(L, -1))
+	rpmversion = lua_tostring(L, -1);
+    if (rpmversion) {
+	rpmver v1 = rpmverParse(rpmversion);
+	rpmver v2 = rpmverParse(removed_in);
+	if (v2 && rpmverCmp(v1, v2) < 0)
+	    err = 0;
 	rpmverFree(v2);
 	rpmverFree(v1);
     }
     lua_pop(L, 1);
+
+    if (err) {
+	luaL_error(L, "%s() is no longer available, use rpm.spawn() or rpm.execute() instead", func);
+	return; /* not reached */
+    }
+
+    int warn = 1;
+    if (rpmversion) {
+	rpmver v1 = rpmverParse(rpmversion);
+	rpmver v2 = rpmverParse(deprecated_in);
+	if (v2 && rpmverCmp(v1, v2) < 0)
+	    warn = 0;
+	rpmverFree(v2);
+	rpmverFree(v1);
+    }
 
     if (warn) {
 	fprintf(stderr,

@@ -90,6 +90,7 @@ snapshot()
             bwrap --unshare-pid --dev-bind $RPMTEST / --clearenv \
                   --setenv PATH $(env -i sh -c 'echo $PATH') \
                   --setenv HOME /root \
+                  --setenv USER root \
                   --setenv GPG_TTY "" \
                   --chdir / --dev /dev --proc /proc --die-with-parent "$@"
         ;;
@@ -128,13 +129,15 @@ rundebug()
 
 runroot()
 {
-    snapshot exec "$@" \
-             --define "_tmppath /var/tmp"
+    snapshot exec "$@"
 }
 
-runroot_other()
+runpython()
 {
-    snapshot exec "$@"
+    snapshot exec \
+	--setenv LD_PRELOAD "${ASANLIB}" \
+	--setenv ASAN_OPTIONS detect_leaks=0 \
+	"$@"
 }
 
 runroot_user()
@@ -145,7 +148,7 @@ runroot_user()
             shift 2
         ;;
     esac
-    runroot_other --new-session sudo -iu $RPMUSER "$@"
+    runroot --new-session /sbin/runuser -u $RPMUSER -- "$@"
 }
 
 snapshot prune rpmtests.dir/*/tree

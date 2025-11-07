@@ -2,9 +2,8 @@
 
 AT_BANNER([RPM scriptlets])
 
-AT_SETUP([basic script failures 1])
+RPMTEST_SETUP_RW([basic script failures 1])
 AT_KEYWORDS([script])
-RPMDB_INIT
 
 runroot rpmbuild --quiet -bb /data/SPECS/fakeshell.spec
 for v in 1.0 2.0; do
@@ -20,218 +19,260 @@ pkgfile1="/build/RPMS/noarch/${pkg1}.noarch.rpm"
 pkgfile2="/build/RPMS/noarch/${pkg2}.noarch.rpm"
 
 RPMTEST_CHECK([
-echo PRETRANSFAIL
-runroot rpm -U --define "exitpretrans 1" ${pkgfile1} 2>&1; echo $?
-runroot rpm -q ${pkgname} 2>&1
+runroot rpm -U --define "exitpretrans 1" ${pkgfile1}
 ],
 [1],
-[PRETRANSFAIL
-error: %pretrans(scriptfail-1.0-1.noarch) scriptlet failed, exit status 1
+[],
+[error: %pretrans(scriptfail-1.0-1.noarch) scriptlet failed, exit status 1
 error: scriptfail-1.0-1.noarch: install skipped
-1
-package scriptfail is not installed
-],
-[])
+])
 
 RPMTEST_CHECK([
-echo PRETRANS
-runroot rpm -U --define "exitpretrans 0" ${pkgfile1} 2>&1; echo $?
-runroot rpm -q ${pkgname} 2>&1
-runroot rpm -e ${pkgname} 2>&1
-],
-[0],
-[PRETRANS
-0
-scriptfail-1.0-1.noarch
-],
-[])
-
-RPMTEST_CHECK([
-echo PREFAIL
-runroot rpm -U --define "exitpre 1" ${pkgfile1} 2>&1; echo $?
-runroot rpm -q ${pkgname} 2>&1
+runroot rpm -q ${pkgname}
 ],
 [1],
-[PREFAIL
-error: %prein(scriptfail-1.0-1.noarch) scriptlet failed, exit status 1
+[package scriptfail is not installed
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -U --define "exitpretrans 0" ${pkgfile1}
+],
+[0],
+[],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -q ${pkgname}
+runroot rpm -e ${pkgname}
+],
+[0],
+[scriptfail-1.0-1.noarch
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -U --define "exitpre 1" ${pkgfile1}
+],
+[1],
+[],
+[error: %prein(scriptfail-1.0-1.noarch) scriptlet failed, exit status 1
 error: scriptfail-1.0-1.noarch: install failed
-1
-package scriptfail is not installed
-],
-[])
+])
 
 RPMTEST_CHECK([
-echo PRE
-runroot rpm -U --define "exitpre 0" ${pkgfile1} 2>&1; echo $?
-runroot rpm -q ${pkgname} 2>&1
-],
-[0],
-[PRE
-0
-scriptfail-1.0-1.noarch
-],
-[])
-
-RPMTEST_CHECK([
-echo PREUNFAIL
-runroot rpm -e --define "exitpreun 1" ${pkgname} 2>&1; echo $?
-runroot rpm -q ${pkgname} 2>&1
-],
-[0],
-[PREUNFAIL
-error: %preun(scriptfail-1.0-1.noarch) scriptlet failed, exit status 1
-error: scriptfail-1.0-1.noarch: erase failed
-1
-scriptfail-1.0-1.noarch
-],
-[])
-
-RPMTEST_CHECK([
-echo PREUNTRANSFAIL
-runroot rpm -e --define "exitpreuntrans 1" ${pkgname} 2>&1; echo $?
-runroot rpm -q ${pkgname} 2>&1
-],
-[0],
-[PREUNTRANSFAIL
-error: %preuntrans(scriptfail-1.0-1.noarch) scriptlet failed, exit status 1
-error: scriptfail-1.0-1.noarch: erase skipped
-1
-scriptfail-1.0-1.noarch
-],
-[])
-
-RPMTEST_CHECK([
-echo PREUN
-runroot rpm -e --define "exitpreun 0" ${pkgname} 2>&1; echo $?
-runroot rpm -q ${pkgname} 2>&1
+runroot rpm -q ${pkgname}
 ],
 [1],
-[PREUN
-0
-package scriptfail is not installed
+[package scriptfail is not installed
 ],
 [])
 
 RPMTEST_CHECK([
-echo POSTFAIL
-runroot rpm -U ${pkgfile1} 2>&1
-runroot rpm -U --define "exitpost 1" ${pkgfile2} 2>&1; echo $?
-runroot rpm -q ${pkgname} 2>&1
-runroot rpm -e ${pkgname} 2>&1
+runroot rpm -U --define "exitpre 0" ${pkgfile1}
 ],
 [0],
-[POSTFAIL
-warning: %post(scriptfail-2.0-1.noarch) scriptlet failed, exit status 1
-0
-scriptfail-2.0-1.noarch
-],
+[],
 [])
 
 RPMTEST_CHECK([
-echo POST
-runroot rpm -U ${pkgfile1} 2>&1
-runroot rpm -U --define "exitpost 0" ${pkgfile2} 2>&1; echo $?
 runroot rpm -q ${pkgname} 2>&1
-runroot rpm -e ${pkgname} 2>&1
 ],
 [0],
-[POST
-0
-scriptfail-2.0-1.noarch
+[scriptfail-1.0-1.noarch
 ],
 [])
 
 RPMTEST_CHECK([
-echo POSTTRANSFAIL
-runroot rpm -U --define "exitposttrans 1" ${pkgfile1} 2>&1; echo $?
+runroot rpm -e --define "exitpreun 1" ${pkgname}
+],
+[1],
+[],
+[error: %preun(scriptfail-1.0-1.noarch) scriptlet failed, exit status 1
+error: scriptfail-1.0-1.noarch: erase failed
+])
+
+RPMTEST_CHECK([
 runroot rpm -q ${pkgname} 2>&1
-runroot rpm -e ${pkgname} 2>&1
 ],
 [0],
-[POSTTRANSFAIL
-warning: %posttrans(scriptfail-1.0-1.noarch) scriptlet failed, exit status 1
-0
-scriptfail-1.0-1.noarch
+[scriptfail-1.0-1.noarch
 ],
 [])
 
 RPMTEST_CHECK([
-echo POSTTRANS
-runroot rpm -U --define "exitposttrans 0" ${pkgfile1} 2>&1; echo $?
-runroot rpm -q ${pkgname} 2>&1
-runroot rpm -e ${pkgname} 2>&1
+runroot rpm -e --define "exitpreuntrans 1" ${pkgname}
+],
+[1],
+[],
+[error: %preuntrans(scriptfail-1.0-1.noarch) scriptlet failed, exit status 1
+error: scriptfail-1.0-1.noarch: erase skipped
+])
+
+RPMTEST_CHECK([
+runroot rpm -q ${pkgname}
 ],
 [0],
-[POSTTRANS
-0
-scriptfail-1.0-1.noarch
+[scriptfail-1.0-1.noarch
 ],
 [])
 
 RPMTEST_CHECK([
-echo POSTUNFAIL
-runroot rpm -U ${pkgfile1} 2>&1
-runroot rpm -U --define "exitpostun 1" ${pkgfile2} 2>&1; echo $?
-runroot rpm -q ${pkgname} 2>&1
-runroot rpm -e ${pkgname} 2>&1
+runroot rpm -e --define "exitpreun 0" ${pkgname}
 ],
 [0],
-[POSTUNFAIL
-warning: %postun(scriptfail-1.0-1.noarch) scriptlet failed, exit status 1
-0
-scriptfail-2.0-1.noarch
+[],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -q ${pkgname}
+],
+[1],
+[package scriptfail is not installed
 ],
 [])
 
 RPMTEST_CHECK([
-echo POSTUNTRANSFAIL
-runroot rpm -U ${pkgfile1} 2>&1
-runroot rpm -U --define "exitpostuntrans 1" ${pkgfile2} 2>&1; echo $?
-runroot rpm -q ${pkgname} 2>&1
-runroot rpm -e ${pkgname} 2>&1
+runroot rpm -U ${pkgfile1}
+runroot rpm -U --define "exitpost 1" ${pkgfile2}
+],
+[1],
+[],
+[warning: %post(scriptfail-2.0-1.noarch) scriptlet failed, exit status 1
+])
+
+RPMTEST_CHECK([
+runroot rpm -q ${pkgname}
 ],
 [0],
-[POSTUNTRANSFAIL
-warning: %postuntrans(scriptfail-1.0-1.noarch) scriptlet failed, exit status 1
-0
-scriptfail-2.0-1.noarch
+[scriptfail-2.0-1.noarch
 ],
 [])
 
 RPMTEST_CHECK([
-echo POSTUN
-runroot rpm -U ${pkgfile1} 2>&1
-runroot rpm -U --define "exitpostun 0" ${pkgfile2} 2>&1; echo $?
-runroot rpm -q ${pkgname} 2>&1
-runroot rpm -e ${pkgname} 2>&1
+runroot rpm -e ${pkgname}
+runroot rpm -U ${pkgfile1}
+runroot rpm -U --define "exitpost 0" ${pkgfile2}
 ],
 [0],
-[POSTUN
-0
-scriptfail-2.0-1.noarch
+[],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -q ${pkgname} 2>&1
+],
+[0],
+[scriptfail-2.0-1.noarch
 ],
 [])
 
 RPMTEST_CHECK([
-echo POSTUNTRANS
-runroot rpm -U ${pkgfile1} 2>&1
-runroot rpm -U --define "exitpostuntrans 0" ${pkgfile2} 2>&1; echo $?
-runroot rpm -q ${pkgname} 2>&1
-runroot rpm -e ${pkgname} 2>&1
+runroot rpm -e ${pkgname}
+runroot rpm -U --define "exitposttrans 1" ${pkgfile1}
+],
+[1],
+[],
+[warning: %posttrans(scriptfail-1.0-1.noarch) scriptlet failed, exit status 1
+])
+
+RPMTEST_CHECK([
+runroot rpm -q ${pkgname}
+],
+[0],
+[scriptfail-1.0-1.noarch
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -e ${pkgname}
+runroot rpm -U --define "exitposttrans 0" ${pkgfile1}
+],
+[0],
+[],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -q ${pkgname}
+],
+[0],
+[scriptfail-1.0-1.noarch
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -e ${pkgname}
+runroot rpm -U ${pkgfile1}
+runroot rpm -U --define "exitpostun 1" ${pkgfile2}
+],
+[1],
+[],
+[warning: %postun(scriptfail-1.0-1.noarch) scriptlet failed, exit status 1
+])
+
+RPMTEST_CHECK([
+runroot rpm -q ${pkgname}
+],
+[0],
+[scriptfail-2.0-1.noarch
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -e ${pkgname}
+runroot rpm -U ${pkgfile1}
+runroot rpm -U --define "exitpostuntrans 1" ${pkgfile2}
+],
+[1],
+[],
+[warning: %postuntrans(scriptfail-1.0-1.noarch) scriptlet failed, exit status 1
+])
+
+RPMTEST_CHECK([
+runroot rpm -q ${pkgname}
+],
+[0],
+[scriptfail-2.0-1.noarch
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -e ${pkgname}
+runroot rpm -U ${pkgfile1}
+runroot rpm -U --define "exitpostun 0" ${pkgfile2}
+],
+[0],
+[],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -q ${pkgname}
+],
+[0],
+[scriptfail-2.0-1.noarch
+],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -e ${pkgname}
+runroot rpm -U ${pkgfile1}
+runroot rpm -U --define "exitpostuntrans 0" ${pkgfile2}
 ],
 [],
-[POSTUNTRANS
-0
-scriptfail-2.0-1.noarch
+[])
+
+RPMTEST_CHECK([
+runroot rpm -q ${pkgname}
+],
+[0],
+[scriptfail-2.0-1.noarch
 ],
 [])
 RPMTEST_CLEANUP
 
 # ------------------------------
 # 
-AT_SETUP([basic scripts and arguments])
+RPMTEST_SETUP_RW([basic scripts and arguments])
 AT_KEYWORDS([verify script])
-RPMDB_INIT
 
 runroot rpmbuild --quiet -bb /data/SPECS/fakeshell.spec
 runroot rpmbuild --quiet -bb --define "rel 1" /data/SPECS/scripts.spec
@@ -293,9 +334,8 @@ scripts-1.0-2 POSTUNTRANS 0
 [])
 RPMTEST_CLEANUP
 
-AT_SETUP([basic trigger scripts: package args])
+RPMTEST_SETUP_RW([basic trigger scripts: package args])
 AT_KEYWORDS([trigger script])
-RPMDB_INIT
 
 runroot rpmbuild --quiet -bb /data/SPECS/fakeshell.spec
 runroot rpmbuild --quiet -bb /data/SPECS/hello-script.spec
@@ -364,9 +404,74 @@ triggers-1.0-1 TRIGGERUN 0 1
 [])
 RPMTEST_CLEANUP
 
-AT_SETUP([basic trigger scripts: runtime args])
+RPMTEST_SETUP_RW([basic trigger scripts: failures])
 AT_KEYWORDS([trigger script])
-RPMDB_INIT
+
+runroot rpmbuild --quiet -bb /data/SPECS/fakeshell.spec
+runroot rpmbuild --quiet -bb --define "rel 1" --define "trigpkg foo" /data/SPECS/triggers.spec
+
+RPMTEST_CHECK([
+runroot rpm -U \
+	/build/RPMS/noarch/fakeshell-1.0-1.noarch.rpm \
+	/build/RPMS/noarch/triggers-1.0-1.noarch.rpm
+],
+[0],
+[],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -U \
+	--define "failtriggerprein 1" \
+	--nosignature \
+	/data/RPMS/foo-1.0-1.noarch.rpm
+],
+[1],
+[triggers-1.0-1 TRIGGERPREIN 1 0
+],
+[error: %triggerprein(triggers-1.0-1.noarch) scriptlet failed, exit status 1
+error: foo-1.0-1.noarch: install failed
+])
+
+RPMTEST_CHECK([
+runroot rpm -U \
+	--define "failtriggerin 1" \
+	--nosignature \
+	/data/RPMS/foo-1.0-1.noarch.rpm
+],
+[1],
+[triggers-1.0-1 TRIGGERPREIN 1 0
+triggers-1.0-1 TRIGGERIN 1 1
+],
+[warning: %triggerin(triggers-1.0-1.noarch) scriptlet failed, exit status 1
+])
+
+RPMTEST_CHECK([
+runroot rpm -e \
+	--define "failtriggerun 1" \
+	foo
+],
+[1],
+[triggers-1.0-1 TRIGGERUN 1 0
+],
+[error: %triggerun(triggers-1.0-1.noarch) scriptlet failed, exit status 1
+error: foo-1.0-1.noarch: erase failed
+])
+
+RPMTEST_CHECK([
+runroot rpm -e \
+	--define "failtriggerpostun 1" \
+	foo
+],
+[1],
+[triggers-1.0-1 TRIGGERUN 1 0
+triggers-1.0-1 TRIGGERPOSTUN 1 0
+],
+[warning: %triggerpostun(triggers-1.0-1.noarch) scriptlet failed, exit status 1
+])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP_RW([basic trigger scripts: runtime args])
+AT_KEYWORDS([trigger script])
 
 runroot rpmbuild --quiet -bb /data/SPECS/fakeshell.spec
 runroot rpmbuild --quiet -bb --define "rel 1" /data/SPECS/scripts.spec
@@ -439,9 +544,8 @@ scripts-1.0-2 POSTUNTRANS 0
 [])
 RPMTEST_CLEANUP
 
-AT_SETUP([basic file trigger scripts])
+RPMTEST_SETUP_RW([basic file trigger scripts])
 AT_KEYWORDS([filetrigger script])
-RPMDB_INIT
 
 runroot rpmbuild --quiet -bb /data/SPECS/fakeshell.spec
 runroot rpmbuild --quiet -bb /data/SPECS/hello-script.spec
@@ -546,9 +650,164 @@ transfiletriggerpostun(/foo*):
 [])
 RPMTEST_CLEANUP
 
-AT_SETUP([basic file triggers: prefix args])
+RPMTEST_SETUP_RW([basic file triggers: failures])
 AT_KEYWORDS([filetrigger script])
-RPMDB_INIT
+
+runroot rpmbuild --quiet -bb /data/SPECS/fakeshell.spec
+runroot rpmbuild --quiet -bb \
+	--define "_datadir /usr/share" \
+	/data/SPECS/testdoc.spec
+runroot rpmbuild --quiet -bb \
+	--define "trigpath /usr/share/doc/testdoc/examples/" \
+	/data/SPECS/ftrigfail.spec
+
+RPMTEST_CHECK([
+runroot rpm -U \
+	/build/RPMS/noarch/fakeshell-1.0-1.noarch.rpm \
+	/build/RPMS/noarch/ftrigfail-1.0-1.noarch.rpm
+],
+[0],
+[],
+[])
+
+RPMTEST_CHECK([
+runroot rpm -U \
+	--define "failfiletriggerin 1" \
+	/build/RPMS/noarch/testdoc-1.0-1.noarch.rpm
+],
+[1],
+[FILETRIGGERIN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+TRANSFILETRIGGERIN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+],
+[warning: %filetriggerin(ftrigfail-1.0-1.noarch) scriptlet failed, exit status 1
+])
+
+RPMTEST_CHECK([
+runroot rpm -e \
+	--define "failtransfiletriggerun 1" \
+	testdoc
+],
+[1],
+[TRANSFILETRIGGERUN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+FILETRIGGERUN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+FILETRIGGERPOSTUN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+TRANSFILETRIGGERPOSTUN
+],
+[warning: %transfiletriggerun(ftrigfail-1.0-1.noarch) scriptlet failed, exit status 1
+])
+
+RPMTEST_CHECK([
+runroot rpm -U \
+	--define "failtransfiletriggerin 1" \
+	/build/RPMS/noarch/testdoc-1.0-1.noarch.rpm
+],
+[1],
+[FILETRIGGERIN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+TRANSFILETRIGGERIN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+],
+[warning: %transfiletriggerin(ftrigfail-1.0-1.noarch) scriptlet failed, exit status 1
+])
+
+RPMTEST_CHECK([
+runroot rpm -e \
+	--define "failtransfiletriggerun 1" \
+	testdoc
+],
+[1],
+[TRANSFILETRIGGERUN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+FILETRIGGERUN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+FILETRIGGERPOSTUN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+TRANSFILETRIGGERPOSTUN
+],
+[warning: %transfiletriggerun(ftrigfail-1.0-1.noarch) scriptlet failed, exit status 1
+])
+
+RPMTEST_CHECK([
+runroot rpm -U /build/RPMS/noarch/testdoc-1.0-1.noarch.rpm &> /dev/null
+runroot rpm -e \
+	--define "failfiletriggerun 1" \
+	testdoc
+],
+[1],
+[TRANSFILETRIGGERUN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+FILETRIGGERUN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+FILETRIGGERPOSTUN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+TRANSFILETRIGGERPOSTUN
+],
+[warning: %filetriggerun(ftrigfail-1.0-1.noarch) scriptlet failed, exit status 1
+])
+
+RPMTEST_CHECK([
+runroot rpm -U /build/RPMS/noarch/testdoc-1.0-1.noarch.rpm &> /dev/null
+runroot rpm -e \
+	--define "failfiletriggerpostun 1" \
+	testdoc
+],
+[1],
+[TRANSFILETRIGGERUN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+FILETRIGGERUN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+FILETRIGGERPOSTUN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+TRANSFILETRIGGERPOSTUN
+],
+[warning: %filetriggerpostun(ftrigfail-1.0-1.noarch) scriptlet failed, exit status 1
+])
+
+RPMTEST_CHECK([
+runroot rpm -U /build/RPMS/noarch/testdoc-1.0-1.noarch.rpm &> /dev/null
+runroot rpm -e \
+	--define "failtransfiletriggerpostun 1" \
+	testdoc
+],
+[1],
+[TRANSFILETRIGGERUN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+FILETRIGGERUN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+FILETRIGGERPOSTUN
+/usr/share/doc/testdoc/examples/example1
+/usr/share/doc/testdoc/examples/example2
+TRANSFILETRIGGERPOSTUN
+],
+[warning: %transfiletriggerpostun(ftrigfail-1.0-1.noarch) scriptlet failed, exit status 1
+])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP_RW([basic file triggers: prefix args])
+AT_KEYWORDS([filetrigger script])
 
 runroot rpmbuild --quiet -bb /data/SPECS/fakeshell.spec
 runroot rpmbuild --quiet -bb /data/SPECS/hello-script.spec
@@ -680,9 +939,8 @@ filetriggerun:
 
 RPMTEST_CLEANUP
 
-AT_SETUP([basic file triggers: runtime args])
+RPMTEST_SETUP_RW([basic file triggers: runtime args])
 AT_KEYWORDS([filetrigger script])
-RPMDB_INIT
 
 runroot rpmbuild --quiet -bb /data/SPECS/fakeshell.spec
 for v in 1.0 2.0 3.0; do
@@ -772,42 +1030,41 @@ runroot rpm -e parallel-trigger
 [])
 RPMTEST_CLEANUP
 
-AT_SETUP([script running environment])
+RPMTEST_SETUP_RW([script running environment])
 AT_KEYWORDS([script])
-AT_SKIP_IF([test ${HAVE_UNSHARE} = 0])
-RPMDB_INIT
+RPMTEST_SKIP_IF([test ${HAVE_UNSHARE} = 0])
 runroot rpmbuild -bb --quiet \
 	/data/SPECS/fakeshell.spec \
 	/data/SPECS/scriptwrite.spec
 
 RPMTEST_CHECK([
-RPMDB_INIT
-runroot_other rm -f /tmp/scriptwrite.log
+RPMDB_RESET
+runroot rm -f /tmp/scriptwrite.log
 runroot rpm -U /build/RPMS/noarch/fakeshell-1.0-1.noarch.rpm /build/RPMS/noarch/scriptwrite-1.0-1.noarch.rpm
-runroot_other test -f /tmp/scriptwrite.log
+runroot test -f /tmp/scriptwrite.log
 ],
 [1],
 [],
 [])
 
 RPMTEST_CHECK([
-RPMDB_INIT
-runroot_other rm -f /tmp/scriptwrite.log
+RPMDB_RESET
+runroot rm -f /tmp/scriptwrite.log
 runroot rpm -U --noplugins /build/RPMS/noarch/fakeshell-1.0-1.noarch.rpm /build/RPMS/noarch/scriptwrite-1.0-1.noarch.rpm
-runroot_other test -f /tmp/scriptwrite.log
+runroot test -f /tmp/scriptwrite.log
 ],
 [0],
 [],
 [])
 RPMTEST_CLEANUP
 
-AT_SETUP([deprecated Lua functions])
+RPMTEST_SETUP_RW([deprecated Lua functions])
 AT_KEYWORDS([script lua])
 
 # binary pre-built on rpm 4.18 should emit no warnings
 RPMTEST_CHECK([
-RPMDB_INIT
-runroot rpm -U /data/RPMS/luafork-1.0-1.noarch.rpm
+RPMDB_RESET
+runroot rpm -U --nosignature /data/RPMS/luafork-1.0-1.noarch.rpm
 ],
 [0],
 [child
@@ -815,10 +1072,9 @@ runroot rpm -U /data/RPMS/luafork-1.0-1.noarch.rpm
 [])
 
 RPMTEST_CHECK([
-RPMDB_INIT
-
-runroot rpmbuild -bb --quiet /data/SPECS/luafork.spec
-runroot rpm -U /build/RPMS/noarch/luafork-1.0-1.noarch.rpm
+RPMDB_RESET
+# binary pre-built on rpm 4.20 gets deprecation warnings
+runroot rpm -U --nosignature /data/RPMS/luafork-1.0-1-deprecated.noarch.rpm
 ],
 [0],
 [child
@@ -826,6 +1082,19 @@ runroot rpm -U /build/RPMS/noarch/luafork-1.0-1.noarch.rpm
 [warning: posix.fork(): .fork(), .exec(), .wait() and .redirect2null() are deprecated, use rpm.spawn() or rpm.execute() instead
 warning: posix.wait(): .fork(), .exec(), .wait() and .redirect2null() are deprecated, use rpm.spawn() or rpm.execute() instead
 ])
+
+RPMTEST_CHECK([
+RPMDB_RESET
+
+# new uses get an error
+runroot rpmbuild -bb --quiet /data/SPECS/luafork.spec
+runroot rpm -U /build/RPMS/noarch/luafork-1.0-1.noarch.rpm
+],
+[1],
+[],
+[[error: lua script failed: [string "%prein(luafork-1.0-1.noarch)"]:1: posix.fork() is no longer available, use rpm.spawn() or rpm.execute() instead
+error: luafork-1.0-1.noarch: install failed
+]])
 
 RPMTEST_CLEANUP
 

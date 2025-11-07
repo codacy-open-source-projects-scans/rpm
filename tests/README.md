@@ -74,7 +74,7 @@ You can also drop straight into the `$RPMTEST` container like so:
 
     make shell
 
-This is just a shorthand for `make atshell` followed by `runroot_other bash`.
+This is just a shorthand for `make atshell` followed by `runroot bash`.
 
 To factory-reset the `$RPMTEST` tree, run:
 
@@ -84,10 +84,11 @@ To only build the OCI image, use:
 
     make tree
 
-You can also just use Podman or Docker directly to manage containers (the image
-is named `rpm` when built).  For example, to run a shell:
+You can now also tag the image and then use it with Podman or Docker as normal:
 
-    podman run -it rpm
+    cd tests/
+    ./mktree tag <image-name>
+    podman run -it <image-name> ...
 
 ## Understanding the tests
 
@@ -134,29 +135,47 @@ For the typical structure of a single test, consult GNU Autotest's
 [documentation](https://www.gnu.org/savannah-checkouts/gnu/autoconf/manual/autoconf-2.71/autoconf.html#Writing-Testsuites)
 as well as the existing tests.  Below are the specifics of RPM's test-suite:
 
-* Use `RPMTEST_CHECK` instead of `AT_CHECK`
-* Use `RPMTEST_CLEANUP` instead of `AT_CLEANUP`
-* Use `RPMTEST_SETUP` or `RPMDB_INIT` to create a mutable snapshot (optional)
+* Use `RPMTEST_SETUP` instead of `AT_SETUP` to setup a test in an immutable
+  system image with writable `.` and `/tmp`.
+* Use `RPMTEST_SETUP_RW` instead of `AT_SETUP` to prepare the use of a mutable
+  snapshot of the system image. To be used when the test needs to modify
+  the system image itself - to install a package, import keys and so on.
     * The absolute path to the snapshot's root is stored in the `$RPMTEST`
       environment variable, modify the directory tree as you wish
-    * To run RPM inside the snapshot, use the `runroot` prefix, e.g. `runroot
-      rpm ...`
-    * To run any other binary inside the snapshot, use `runroot_other` instead
-    * By default, `runroot` and `runroot_other` will operate in a clean
+    * To run a binary inside the snapshot, use the `runroot` prefix,
+      e.g. `runroot rpm ...`
+    * By default, `runroot` will operate in a clean
       environment with only a handful of variables preset.  To pass your own
       variable(s), use `--setenv` (once for each variable), e.g. `runroot
       --setenv FOO "foo" rpm ...`
+    * Due to historical reasons, a mutable snapshot is currently needed for
+      merely building packages as well.
+* Use `RPMTEST_CHECK` instead of `AT_CHECK`
+* Use `RPMTEST_CLEANUP` instead of `AT_CLEANUP`
+* Use `RPMTEST_SKIP_IF` instead of `AT_SKIP_IF`
 * Use `RPMTEST_USER` to create a regular UNIX user in a mutable snapshot
     * The username is stored in the `$RPMUSER` environment variable
     * To run a binary as `$RPMUSER` inside the snapshot, use `runroot_user`
-      (this calls `sudo(8)` underneath)
+      (this calls `runuser(1)` underneath)
     * You can create a custom user (or users) by supplying a list of usernames
       to the macro, e.g. `RPMTEST_USER([user1, user2])`.  Then, use
       `runroot_user -n <name>` to run a binary as a specific user
+* Use `RPMDB_RESET` to reinitialize a snapshot to an empty rpmdb (avoid this)
+* Use `RPMTEST_SNAPSHOT_MOUNT` create a mutable snapshot inside an immutable
+  test (not normally needed, use RPMTEST_SETUP_RW instead)
 * If no snapshot was used, just call the RPM binaries normally
 * Store any working files in the current directory (it's always writable)
 
 ### Tips & Tricks
+
+* If you've configured your CMake build with the `ENABLE_ASAN` and/or
+  `ENABLE_UBSAN` options enabled (OFF by default), the test-suite will run
+  significantly slower, increasing the total execution time by as much as 2
+  minutes on modern hardware.  If this is an issue, consider setting up a
+  separate CMake build on the side without these options enabled and use that
+  for running the test-suite iteratively.  Before submitting a PR, though,
+  please verify that the test-suite still passes with those options enabled
+  (the easiest way is to run `make ci`).
 
 * Sometimes, you may need to specify a literal square bracket, such as in RPM
   commands using `--qf` format strings.  Do that by wrapping the whole script

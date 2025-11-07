@@ -9,6 +9,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <stack>
 
@@ -80,6 +81,8 @@ struct rpmMacroContext_s {
     int depth {};	 /*!< Depth tracking on external recursion */
     int level {};	 /*!< Scope level tracking when on external recursion */
     std::recursive_mutex mutex {};
+
+    rpmMacroContext_s();
 };
 
 static struct rpmMacroContext_s rpmGlobalMacroContext_s;
@@ -915,7 +918,7 @@ void splitQuoted(ARGV_t *av, const char * str, const char * seps)
 
     while (start != NULL) {
 	if (!quoted && strchr(seps, *s)) {
-	    size_t slen = s - start;
+	    ptrdiff_t slen = s - start;
 	    /* quoted arguments are always kept, otherwise skip empty args */
 	    if (slen > 0) {
 		char *d, arg[slen + 1];
@@ -1312,6 +1315,34 @@ static void doRpmver(rpmMacroBuf mb, rpmMacroEntry me, ARGV_t argv, size_t *pars
     rpmMacroBufAppendStr(mb, VERSION);
 }
 
+static void doSpan(rpmMacroBuf mb, rpmMacroEntry me, ARGV_t argv, size_t *parsed)
+{
+    rpmMacroBufAppendStr(mb, argv[1]);
+}
+
+const static std::unordered_map<std::string,std::pair<std::string,std::string>> xdgvars = {
+    { "cache",	{ "XDG_CACHE_HOME",	".cache" } },
+    { "config",	{ "XDG_CONFIG_HOME",	".config" } },
+    { "data",	{ "XDG_DATA_HOME",	".local/share" } },
+    { "state",	{ "XDG_STATE_HOME",	".local/state" } },
+};
+
+static void doXdg(rpmMacroBuf mb, rpmMacroEntry me, ARGV_t argv, size_t *parsed)
+{
+    auto res = xdgvars.find(argv[1]);
+    if (res == xdgvars.end()) {
+	rpmMacroBufErr(mb, 1, "%s: invalid argument: %s\n", argv[0], argv[1]);
+	return;
+    }
+    auto const & vars = res->second;
+    auto mctx = rpm::macros();
+    auto [ rc, xenv ] = mctx.expand({"%{getenv:", vars.first, "}"});
+    if (rc || xenv.empty())
+	xenv = mctx.expand({"%{getenv:HOME}/", vars.second}).second;
+
+    rpmMacroBufAppendStr(mb, xenv.c_str());
+}
+
 static struct builtins_s {
     const char * name;
     macroFunc func;
@@ -1345,6 +1376,7 @@ static struct builtins_s {
     { "reverse",	doString,	1,	0 },
     { "rpmversion",	doRpmver,	0,	0 },
     { "shrink",		doFoo,		1,	0 },
+    { "span",		doSpan,		1,	0 },
     { "sub",		doString,	1,	0 },
     { "suffix",		doFoo,		1,	0 },
     { "trace",		doTrace,	0,	0 },
@@ -1356,6 +1388,7 @@ static struct builtins_s {
     { "url2path",	doFoo,		1,	0 },
     { "verbose",	doVerbose,	-1,	ME_PARSE },
     { "warn",		doOutput,	1,	0 },
+    { "xdg",		doXdg,		1,	0 },
     { NULL,		NULL,		0 }
 };
 
@@ -1870,7 +1903,8 @@ static void copyMacros(rpmMacroContext src, rpmMacroContext dst, int level)
 {
     for (auto const & entry : src->tab) {
 	auto const & me = entry.second.top();
-	pushMacro(dst, me.name, me.opts, me.body, level, me.flags);
+	if (me.level != RMIL_BUILTIN)
+	    pushMacro(dst, me.name, me.opts, me.body, level, me.flags);
     }
 }
 
@@ -2013,9 +2047,24 @@ rpmExpandNumeric(const char *arg)
     return res;
 }
 
+static void initBuiltins(rpmMacroContext_s *mc)
+{
+    /* Define built-in macros */
+    for (const struct builtins_s *b = builtinmacros; b->name; b++) {
+	pushMacroAny(mc, b->name, b->nargs ? "" : NULL, "<builtin>",
+		    b->func, NULL, b->nargs, RMIL_BUILTIN, b->flags | ME_FUNC);
+    }
+}
+
+rpmMacroContext_s::rpmMacroContext_s()
+{
+    initBuiltins(this);
+}
+
 void macros::clear()
 {
     mc->tab.clear();
+    initBuiltins(mc);
 }
 
 void macros::copy(rpm::macros & dest, int level)
@@ -2030,6 +2079,7 @@ int macros::define(const std::string & macro, int level)
 
 void macros::dump(FILE *fp)
 {
+    if (fp == NULL) fp = stderr;
     fprintf(fp, "========================\n");
     for (auto & entry : mc->tab) {
 	auto const & me = entry.second.top();
@@ -2110,12 +2160,6 @@ macros::expand_numeric(const std::initializer_list<std::string> & src, int flags
 
 void macros::init(const std::string & macrofiles)
 {
-    /* Define built-in macros */
-    for (const struct builtins_s *b = builtinmacros; b->name; b++) {
-	pushMacroAny(mc, b->name, b->nargs ? "" : NULL, "<builtin>",
-		    b->func, NULL, b->nargs, RMIL_BUILTIN, b->flags | ME_FUNC);
-    }
-
     ARGV_t pattern, globs = NULL;
     argvSplit(&globs, macrofiles.c_str(), ":");
     for (pattern = globs; pattern && *pattern; pattern++) {

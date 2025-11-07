@@ -1,11 +1,8 @@
-#/*! \page config_macros Default configuration: @RPM_CONFIGDIR@/macros
-# \verbatim
-#
 # This is a global RPM configuration file. All changes made here will
-# be lost when the rpm package is upgraded. Any per-system configuration
-# should be added to /etc/rpm/macros, while per-user configuration should
-# be added to ~/.rpmmacros.
+# be lost when the rpm package is upgraded.
 #
+# See rpm-macros(7), rpm-macrofile(5) and rpm-config(5) rpmbuild-config(5)
+# for more information.
 
 #==============================================================================
 # ---- A macro that expands to nothing.
@@ -133,14 +130,14 @@
 
 %_keyringpath		%{_dbpath}/pubkeys/
 
-# Location of passwd(5) and group(5)
+# Location of passwd(5) and group(5), as : separated list
 %_passwd_path		/etc/passwd
 %_group_path		/etc/group
 
 # location of sysusers.d(5) directory
 %_sysusersdir		@sysusersdir@
 
-# sysusers helper binary (or a replacement script), uncomment to disable
+# sysusers helper binary (or a replacement script), comment out to disable
 #%__systemd_sysusers	@__SYSTEMD_SYSUSERS@
 %__systemd_sysusers	%{_rpmconfigdir}/sysusers.sh
 
@@ -150,6 +147,9 @@
 #
 #	A spec file can %%define _find_debuginfo_opts to pass options to
 #	the script.  See the script for details.
+#
+#	Other macro files can %%define _find_debuginfo_vendor_opts to pass
+#       options to the script.
 #
 %__debug_install_post   \
     %{__find_debuginfo} \\\
@@ -163,6 +163,7 @@
     %{?_unique_debug_srcs:--unique-debug-src-base "%{name}-%{VERSION}-%{RELEASE}.%{_arch}"} \\\
     %{?_find_debuginfo_dwz_opts} \\\
     %{?_find_debuginfo_opts} \\\
+    %{?_find_debuginfo_vendor_opts} \\\
     %{?_debugsource_packages:-S debugsourcefiles.list} \\\
     "%{builddir}/%{?buildsubdir}"\
 %{nil}
@@ -260,11 +261,8 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 #	(legacy).
 %_rpmfilename		%{_build_name_fmt}
 
-#	EXPERIMENTAL
-#	This does NOT generate actual v6 format, the exact format
-#	hasn't been finalized yet.
 #	Which rpm format go generate (4 or 6)
-%_rpmformat 4
+%_rpmformat 6
 
 #	The directory where sources/patches from a source package will be
 #	installed. This is also where sources/patches are found when building.
@@ -370,18 +368,7 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 #%packager
 
 #	Compression type and level for source/binary package payloads.
-#		"w9.gzdio"	gzip level 9 (v4 and srpm default)
-#		"w9.bzdio"	bzip2 level 9.
-#		"w6.xzdio"	xz level 6, xz's default.
-#		"w7T16.xzdio"	xz level 7 using 16 threads
-#		"w7T0.xzdio"	xz level 7 using %{getncpus} threads
-#		"w7T.xzdio"	xz level 7 using %{getncpus} threads
-#		"w6.lzdio"	lzma-alone level 6, lzma's default
-#		"w3.zstdio"	zstd level 3, zstd's default
-#		"w19T8.zstdio"	zstd level 19 using 8 threads
-#		"w7T0.zstdio"	zstd level 7 using %{getncpus} threads
-#		"w19.zstdio"	zstd level 19 (v6 default)
-#		"w.ufdio"	uncompressed
+#	See rpm-payloadflags(7).
 #
 #%_source_payload	w9.gzdio
 %_binary_payload	%[ %_rpmformat >=6 ? "w19.zstdio" : "w9.gzdio" ]
@@ -638,10 +625,10 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 %__sq @__SQ@
 %__sq_sign_cmd()	%{shescape:%{__sq}} \
 	sign \
-	%{?_sq_path:--homedir %{shescape:%{_sq_path}}} \
-        %{?_openpgp_sign_id:--signer-key %{_openpgp_sign_id}} \
+	%{?_sq_path:--home %{shescape:%{_sq_path}}} \
+        %{?_openpgp_sign_id:--signer %{_openpgp_sign_id}} \
 	%{?_sq_sign_cmd_extra_args} \
-        --binary --detached --output %{shescape:%{2}} -- %{shescape:%{1}}
+        --binary --signature-file %{shescape:%{2}} -- %{shescape:%{1}}
 
 %__openpgp_sign_cmd %{expand:%{__%{_openpgp_sign}_sign_cmd}}
 
@@ -650,9 +637,9 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 #	Macro(s) used to parameterize transactions.
 #
 #	The output binary package file name template used when building
-#	binary packages.
+#	binary packages, as described by rpm-queryformat(7). Percent signs need
+#	to be escaped.
 #
-# XXX	Note: escaped %% for use in headerSprintf()
 %_build_name_fmt	%%{ARCH}/%%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm
 
 #	Verify digest/signature flags for various rpm modes:
@@ -693,11 +680,14 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 # signature	require valid signature(s)
 # digest	require valid digest(s)
 # none		traditional rpm behavior, nothing required
-%_pkgverify_level digest
+%_pkgverify_level all
 
 # Disabler flags for package verification (similar to vsflags)
 # Set to 0x0 for full compatibility with v4 packages.
 %_pkgverify_flags 0x20100
+
+# Which algorithms to calculate package digests on during verification.
+%_pkgverify_digests 8:10
 
 # Minimize writes during transactions (at the cost of more reads) to
 # conserve eg SSD disks (EXPERIMENTAL).
@@ -722,9 +712,8 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 #%_fsverity_sign_config_files	0
 
 #
-# Default output format string for rpm -qa
-#
-# XXX	Note: escaped %% for use in headerFormat()
+# Default output format for query operations, as described by
+# rpm-queryformat(7). Percent signs need to be escaped.
 %_query_all_fmt		%%{nvr}%%{archsuffix}
 
 #
@@ -808,7 +797,7 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
   export PKG_CONFIG_PATH
 
 %___build_pre	\
-  %{___build_pre_env} \
+  . %{builddir}/rpmbuild.env\
   %[%{verbose}?"set -x":""]\
   umask 022\
   cd \"%{builddir}\"\
@@ -1192,6 +1181,11 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 # arch macro for 64-bit LOONGARCH processors
 %loongarch64	loongarch64
 
+#------------------------------------------------------------------------------
+# arch macro for all E2K processors
+#
+%e2k		e2k e2kv4 e2kv5 e2kv6 e2k4c e2k8c e2k1cp e2k8c2 e2k12c e2k16c e2k2c3
+
 #------------------------------------------------------------------------
 # Use in %install to generate locale specific file lists. For example,
 #
@@ -1254,14 +1248,14 @@ Supplements:   (%{name} = %{version}-%{release} and langpacks-%{1})\
 %{__git} config gc.auto 0\
 %{__git} add --force .\
 GIT_COMMITTER_DATE=%{__scm_source_timestamp} GIT_AUTHOR_DATE=%{__scm_source_timestamp}\\\
-	%{__git} commit %{-q} --allow-empty -a\\\
+	%{__git} commit %{-q} --no-gpg-sign --allow-empty -a\\\
 	--author "%{__scm_author}" -m "%{NAME}-%{VERSION} base"\
 %{__git} checkout --track -b rpm-build
 
 %__scm_apply_git(qp:m:)\
 %{__git} apply --index --reject %{-p:-p%{-p*}} -\
 GIT_COMMITTER_DATE=%{__scm_source_timestamp} GIT_AUTHOR_DATE=%{__scm_source_timestamp}\\\
-	%{__git} commit %{-q} -m %{-m*} --author "%{__scm_author}"
+	%{__git} commit %{-q} --no-gpg-sign -m %{-m*} --author "%{__scm_author}"
 
 # Git, using "git am" (-m is unused)
 %__scm_setup_git_am(q)\

@@ -4,6 +4,37 @@ title: rpm.org - Spec file format
 ---
 # Spec file format
 
+Spec files describe how software is build and packaged.
+
+### Contents and Links
+
+* [Generic syntax](#generic-syntax)
+  * [→ Macro syntax](macros.md)
+  * [Comments](#comments)
+  * [Conditionals](#conditionals)
+  * [→ Conditional Builds](conditionalbuilds.md)
+  * [Sections](#sections)
+* [Preamble](#preamble)
+  * [Dependencies](#dependencies)
+    * [→ Dependencies Basics](dependencies.md)
+    * [→ More on Dependencies](more_dependencies.md)
+    * [→ Boolean Dependencies](boolean_dependencies.md)
+    * [→ Architecture Dependencies](arch_dependencies.md)
+    * [→ Installation Order](tsort.md)
+    * [→ Automatic Dependency Generation](dependency_generators.md)
+  * [→ Declarative builds](buildsystem.md)
+  * [→ Relocatable Packages](relocatable.md)
+  * [Sub-sections](#sub-sections)
+* [Build scriptlets](#build-scriptlets)
+  * [→ Autosetup](autosetup.md)
+* [Runtime scriptlets](#runtime-scriptlets)
+  * [→ Triggers](triggers.md)
+  * [→ File Triggers](file_triggers.md)
+  * [→ Scriptlet Expansion](scriptlet_expansion.md)
+* [%files section](#files-section)
+  * [→ Users and Groups](users_and_groups.md)
+* [%changelog section](#changelog-section)
+
 ## Generic syntax
 
 ### Macros
@@ -25,7 +56,7 @@ Comments are also allowed after conditionals (see below). Some older
 versions of RPM (4.14 to 4.19) did issue a warning on those, but they
 are fully legal from RPM 4.20 onward.
 
-Macros are expanded even in comment lines. If this is undesireable, escape
+Macros are expanded even in comment lines. If this is undesirable, escape
 the macro with an extra percent sign (%):
 
 ```
@@ -82,6 +113,14 @@ other conditionals.
 %if-conditionals are not macros, and are unlikely to yield expected results
 if used in them.
 
+
+### Conditional Builds ###
+
+Conditionals can be made available for users building the package.
+[Conditional Builds](conditionalbuilds.md) add `--with` and `--without`
+command line options to `rpmbuild` that can be used inside the spec
+file.
+
 ### Sections ###
 
 The spec file is divided in several sections. Except of the preamble
@@ -94,8 +133,8 @@ macros (with parameters) but are not.
 Each section type has its own rules and syntax. Conditionals are
 evaluated first and then macros expanded. Only then are the sections
 parsed by the rules of the section types. The content of build and
-runtime scripts is then passed on the the interpreter - possible being
-stored in a header tag inbetween. The syntax of the other sections is
+runtime scripts is then passed on to the interpreter - possibly being
+stored in a header tag along the way. The syntax of the other sections is
 described below.
 
 ## Preamble
@@ -177,10 +216,17 @@ Arbitrary number of sources may be declared, for example:
 	Source1: mysoft-data-1.0.zip
 ```
 
+Source numbers do not need to be consecutive and may include leading zeroes.
+Unnumbered source tag `Source:` is also supported and is automatically assigned
+the next available integer.
+
 #### Patch
 
 Used to declare patches applied on top of sources. All patches declared
-will be packaged into source rpms.
+will be packaged into source rpms. Just like sources, patches can be
+numbered or unnumbered and are indexed the same way. Unless there is a
+specific reason to use numbered patches, the recommended approach is to use
+unnumbered patches and apply them using `%autosetup` or `%autopatch`.
 
 #### Icon
 
@@ -307,7 +353,7 @@ accepted qualifiers are:
 * `pretrans`
 
   Denotes the dependency must be present before the transaction starts,
-  and cannot be satisified by added packages in a transaction. As such,
+  and cannot be satisfied by added packages in a transaction. As such,
   it does not affect transaction ordering. A pretrans-dependency is
   free to be removed after the install-transaction completes.
 
@@ -418,7 +464,7 @@ you would add
 
 Package is not buildable on architectures listed here.
 Used when software is portable across most architectures except some,
-for example due to endianess issues.
+for example due to endianness issues.
 
 #### ExclusiveArch
 
@@ -453,7 +499,8 @@ unexpected results, in particular with `%global`.
 #### Prefixes (or Prefix)
 
 Specify prefixes this package may be installed into, used to make
-packages relocatable. Very few packages are.
+packages relocatable. Very few packages are. See [Relocatable Packages](relocatable.md) for details.
+
 
 #### DocDir
 
@@ -470,7 +517,27 @@ Used for creating sub-packages with conflicting files, such as different
 variants of the same content (eg minimal and full versions of the same
 software). 
 
+#### More Dependencies related Topics
+  * [Dependencies Basics](dependencies.md)
+  * [More on Dependencies](more_dependencies.md)
+  * [Boolean Dependencies](boolean_dependencies.md)
+  * [Architecture Dependencies](arch_dependencies.md)
+  * [Installation Order](tsort.md)
+  * [Automatic Dependency Generation](dependency_generators.md)
+
 ### Sub-sections
+
+#### `%sourcelist`
+
+List of sources, one per line. Handled like unnumbered Source tags. For
+clarity, mixing Source tags and `%sourcelist` in one specfile is not
+recommended.
+
+#### `%patchlist`
+
+List of patches, one per line. Handled like unnumbered Patch tags. For
+clarity, mixing Patch tags and `%patchlist` in one specfile is not
+recommended.
 
 #### `%package [-n]<name>`
 
@@ -508,7 +575,8 @@ to the corresponding main section, in the order they appear in the spec.
 If the main section does not exist, they are applied relative to the
 first fragment.
 
-During the execution of build scriptlets, (at least) the following
+The execution environment of the build scriptlets is set via the `rpmbuild.env`
+file in the per-package build directory. At least the following
 rpm-specific environment variables are set:
 
 Variable            | Description
@@ -538,7 +606,7 @@ in the script.
 ### %prep
 
 %prep prepares the sources for building. This is where sources are
-unpacked and possible patches applied, and other similar activies
+unpacked and possible patches applied, and other similar activities
 could be performed.
 
 Typically [%autosetup](autosetup.md) is used to automatically handle
@@ -623,7 +691,7 @@ used to install the build requires and restart the build.
 
 On success the found build dependencies are also added to the source
 package. As always they depend on the exact circumstance of the build
-and may be different when bulding based on other packages or even
+and may be different when building based on other packages or even
 another architecture.
 
 ### %conf (since rpm >= 4.18)
@@ -679,43 +747,8 @@ specific `%clean` section generally suggests flaws in the spec.
 
 ## Runtime scriptlets
 
-Runtime scriptlets are executed at the time of install and erase of the
-package. By default, scriptlets are executed with `/bin/sh` shell, but
-this can be overridden with `-p <path>` as an argument to the scriptlet
-for each scriptlet individually. Other supported operations include
-[scriptlet expansion](scriptlet_expansion.md).
-
-### Basic scriptlets
-
- * `%pre`
- * `%post`
- * `%preun`
- * `%postun`
- * `%pretrans`
- * `%posttrans`
- * `%preuntrans`
- * `%postuntrans`
- * `%verify`
-
-### Triggers
-
- * `%triggerprein`
- * `%triggerin`
- * `%triggerun`
- * `%triggerpostun`
-
-More information is available in [trigger chapter](triggers.md).
-
-### File triggers (since rpm >= 4.13)
-
- * `%filetriggerin`
- * `%filetriggerun`
- * `%filetriggerpostun`
- * `%transfiletriggerin`
- * `%transfiletriggerun`
- * `%transfiletriggerpostun`
-
-More information is available in [file trigger chapter](file_triggers.md).
+Runtime scriptlets are executed at various stages of a package's lifetime,
+such as install or erase. For more information, see *rpm-scriptlets*(7).
 
 ## %files section
 

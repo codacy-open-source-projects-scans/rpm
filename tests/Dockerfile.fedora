@@ -1,5 +1,6 @@
-# Supported Fedora releases: 40 41
-FROM registry.fedoraproject.org/fedora:41 AS base
+# Supported Fedora releases: 43 44
+FROM registry.fedoraproject.org/fedora:43 AS base
+LABEL com.github.containers.toolbox="true"
 MAINTAINER rpm-maint@lists.rpm.org
 
 RUN echo -e "deltarpm=0\ninstall_weak_deps=0\ntsflags=nodocs" >> /etc/dnf/dnf.conf
@@ -51,15 +52,27 @@ RUN dnf -y install \
   gdb-headless \
   dwz \
   fsverity-utils fsverity-utils-devel \
-  pandoc \
+  scdoc \
+  scd2html \
   sequoia-sq \
   libasan \
   libubsan
 # If updates to specific packages are needed, do it here
-# RUN dnf --enablerepo=updates update ...
+# RUN dnf -y --enablerepo=updates install ...
+
+# Install some development tools
+RUN dnf -y install \
+    flatpak-spawn \
+    gdb \
+    strace \
+    valgrind
+
 RUN dnf clean all
 
-RUN echo "%_dbpath $(rpm --eval '%_dbpath')" > /root/.rpmmacros
+# Install podman shim for use in toolbox containers
+RUN echo -e "#!/bin/bash\nexec flatpak-spawn --host podman \"\$@\"" \
+    > /usr/local/bin/podman
+RUN chmod +x /usr/local/bin/podman
 
 # Workaround for pkgconf(1)'s unlisted dependency on rpm.
 # This is needed for cmake to work without an rpm installation.
@@ -67,17 +80,7 @@ RUN ln -sf $(rpm --eval '%{_target_platform}%{?_gnu}')-pkg-config \
            /usr/bin/pkg-config
 
 # Self-destruct stock rpm
-RUN if which dnf5; then \
-	# Fedora 41+ \
-	rpm -e --nodeps --nodb \
-	    rpm-plugin-ima; \
-    else \
-	# Fedora 40 \
-	rpm -e --nodeps --nodb \
-	    rpm-sign-libs \
-	    python3-rpm; \
-    fi; \
-    rpm -e --nodeps --nodb \
+RUN rpm -e --nodeps --nodb \
 	rpm \
 	rpm-libs \
 	rpm-build-libs
@@ -89,7 +92,6 @@ FROM base AS full
 
 WORKDIR /srv/rpm
 COPY . .
-RUN chmod -R a-w .
 
 WORKDIR /srv/build
 ENV CFLAGS="-Og -g"

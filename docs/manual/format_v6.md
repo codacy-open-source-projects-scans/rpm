@@ -19,7 +19,7 @@ package file is divided in 4 logical sections:
 . Payload   -- compressed archive of the file(s) in the package (aka "payload")
 ```
 
-All applicaple integer quantities are stored in network byte order
+All applicable integer quantities are stored in network byte order
 (big-endian). When data is presented, the first number is the
 byte number, or address, in hex, followed by the byte values in hex,
 followed by character "translations" (where appropriate).
@@ -50,19 +50,28 @@ The Signature can contain several tags of different types:
 Name        	    | Tag   | Header Type
 --------------------|-------|------------
 HEADERSIGNATURES    |   62  | BIN
-DSA                 |  267  | BIN
-RSA                 |  268  | BIN
+DSA (legacy)        |  267  | BIN
+RSA (legacy)        |  268  | BIN
 SHA256              |  272  | STRING
 FILESIGNATURES      |  274  | STRING_ARRAY
 VERITYSIGNATURES    |  276  | STRING_ARRAY
 VERITYSIGNATUREALGO |  277  | INT_32
+OPENPGP             |  278  | STRING_ARRAY
+SHA3_256            |  279  | STRING
 RESERVED            |  999  | BIN
 
-All packages carry at least HEADERSIGNATURES, SHA256 and RESERVED tags.
+All packages carry at least HEADERSIGNATURES, SHA256, SHA3_256 and
+RESERVED tags.
 
-On digitally signed packages, one of RSA or DSA tags is present and
-contains an OpenPGP signature on the Header. The RSA tag is used for
-RSA signatures and the DSA tag is used for EcDSA signatures.
+On digitally signed packages, the OPENPGP tag will contain one or more
+base64-encoded OpenPGP signatures on the Header. The number of signatures
+per package is unlimited except for the limits presented by the containing
+header. The signatures in the OPENPGP tag are known as RPM v6 signatures.
+
+In addition, a v6 package with an RPM v6 signature may also have one
+one of the RSA or DSA tags present, known as RPM v4 signatures.
+These exist solely for the purpose of RPM 4.x compatibility, RPM will ignore
+v4 signature tags if v6 signatures are present.
 
 Tags numbers above 999, including those of v3 (header+payload) signatures,
 are considered illegal on v6 packages.
@@ -96,20 +105,26 @@ Strict tag sorting is required, and no duplicate tags are permitted.
 The complete list of tags is documented [here](tags.md), but in particular
 for v6:
 - New numeric tag RPMTAG_RPMFORMAT for the rpm package format version
+- New string tag RPMTAG_SOURCENEVR in binary packages, identifying the
+  name-[epoch:]-version-release of the package source
 - RPMTAG_ENCODING is required to be present and contain "utf-8"
 - RPMTAG_LONGFILESIZES are always used to represent file sizes
 - RPMTAG_FILEDIGESTALGO is always present and at least SHA256 in strength
-- RPMTAG_PAYLOADDIGEST and RPMTAG_PAYLOADDIGESTALT are always present
-  and contain SHA256 hashes of the Payload (compressed and
-  uncompressed). Thus a header signature is sufficient to establish
-  cryptographic provenance of the package, without having to separately
-  calculate the payload signature. The alternatives allow freely switching
-  between a compressed and uncompressed payload for a package.
+- RPMTAG_PAYLOADSHA256 and RPMTAG_PAYLOADSHA256ALT (optional in v4),
+  containing SHA256 hashes of the Payload (compressed and uncompressed).
+- New RPMTAG_PAYLOADSHA512, RPMTAG_PAYLOADSHA512ALT,
+- RPMTAG_PAYLOADSHA3_256 and RPMTAG_PAYLOADSHA3_256ALT tags, containing
+  SHA512 and SHA3-256 hashes of the Payload (compressed and uncompressed).
 - Similarly, there are two alternative size tags on the Payload (compressed
   and uncompressed): RPMTAG_PAYLOADSIZE and RPMTAG_PAYLOADSIZEALT
 - File type information is stored as MIME types instead of libmagic
   strings in RPMTAG_MIMEDICT and RPMTAG_FILEMIMEINDEX, retrievable
   with RPMTAG_FILEMIMES extension.
+
+The Payload hashes in a signed Header are sufficient to establish
+cryptographic provenance of the package, without having to separately
+calculate the payload signature. The alternatives allow freely switching
+between a compressed and uncompressed payload for a package.
 
 ## Payload
 

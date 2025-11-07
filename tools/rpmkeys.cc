@@ -15,10 +15,12 @@ enum modes {
     MODE_DELKEY		= (1 << 2),
     MODE_LISTKEY	= (1 << 3),
     MODE_EXPORTKEY	= (1 << 4),
+    MODE_REBUILD	= (1 << 5),
 };
 
 static int mode = 0;
 static int test = 0;
+static char * from = NULL;
 
 static struct poptOption keyOptsTable[] = {
     { "checksig", 'K', (POPT_ARG_VAL|POPT_ARGFLAG_OR), &mode, MODE_CHECKSIG,
@@ -35,6 +37,10 @@ static struct poptOption keyOptsTable[] = {
 	N_("Erase keys from RPM keyring"), NULL },
     { "list", 'l', (POPT_ARG_VAL|POPT_ARGFLAG_OR), &mode, MODE_LISTKEY,
 	N_("list keys from RPM keyring"), NULL },
+    { "rebuild", '\0', (POPT_ARG_VAL|POPT_ARGFLAG_OR), &mode, MODE_REBUILD,
+	N_("rebuild the keyring - convert to current backend"), NULL },
+    { "from", '\0', POPT_ARG_STRING, &from, 0,
+	N_("get keys from this backend when rebuilding current backend"), NULL },
     POPT_TABLEEND
 };
 
@@ -58,14 +64,6 @@ static int matchingKeys(rpmts ts, ARGV_const_t args, int callback(rpmPubkey, voi
     if (args) {
 	for (char * const * arg = args; *arg; arg++) {
 	    int found = false;
-	    size_t klen = strlen(*arg);
-
-	    /* Allow short keyid while we're transitioning */
-	    if (klen != 40 && klen != 16 && klen != 8) {
-		rpmlog(RPMLOG_ERR, ("invalid key id: %s\n"), *arg);
-		ec = EXIT_FAILURE;
-		continue;
-	    }
 
 	    /* Check for valid hex chars */
 	    for (c=*arg; *c; c++) {
@@ -83,8 +81,9 @@ static int matchingKeys(rpmts ts, ARGV_const_t args, int callback(rpmPubkey, voi
 	    while ((key = rpmKeyringIteratorNext(iter))) {
 		const char * fp = rpmPubkeyFingerprintAsHex(key);
 		const char * keyid = rpmPubkeyKeyIDAsHex(key);
-		if (!strcmp(*arg, fp) || !strcmp(*arg, keyid) ||
-		    !strcmp(*arg, keyid+8)) {
+		if (!rstrcasecmp(*arg, fp) || !rstrcasecmp(*arg, keyid) ||
+		    !rstrcasecmp(*arg, keyid+8))
+		{
 		    found = true;
 		}
 		if (found)
@@ -149,7 +148,8 @@ int main(int argc, char *argv[])
 
     args = (ARGV_const_t) poptGetArgs(optCon);
 
-    if (args == NULL && mode != MODE_LISTKEY && mode != MODE_EXPORTKEY)
+    if (args == NULL && mode != MODE_LISTKEY && mode != MODE_EXPORTKEY &&
+		mode != MODE_REBUILD)
 	argerror(_("no arguments given"));
 
     ts = rpmtsCreate();
@@ -181,6 +181,16 @@ int main(int argc, char *argv[])
     case MODE_LISTKEY:
     {
 	ec = matchingKeys(ts, args, printKey);
+	break;
+    }
+    case MODE_REBUILD:
+    {
+
+	rpmtxn txn = rpmtxnBegin(ts, RPMTXN_WRITE);
+	if (txn) {
+	    ec = rpmtxnRebuildKeystore(txn, from);
+	    rpmtxnEnd(txn);
+	}
 	break;
     }
     default:

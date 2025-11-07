@@ -38,6 +38,7 @@
 #include "rpmlock.hh"
 #include "rpmds_internal.hh"
 #include "rpmfi_internal.hh"	/* only internal apis */
+#include "rpmio_internal.hh"
 #include "rpmte_internal.hh"	/* only internal apis */
 #include "rpmts_internal.hh"
 #include "rpmvs.hh"
@@ -527,6 +528,9 @@ static void handleOverlappedFiles(rpmts ts, fingerPrintCache fpc, rpmte p, rpmfi
 	 * files will be sorted in exactly the same order.
 	 */
 	fiFps = fpCacheGetByFp(fpc, fpList, i, recs);
+	/* We may not *have* records on everything, eg due to relocation. */
+	if (fiFps == NULL)
+	    continue;
 
 	/*
 	 * If this package is being added, look only at other packages
@@ -1170,11 +1174,13 @@ static rpm_loff_t countPkgs(rpmts ts, rpmElementTypes types)
     return npkgs;
 }
 
+namespace {
 struct vfydata_s {
     char *msg;
     int type[3];
     int vfylevel;
 };
+}
 
 static int vfyCb(struct rpmsinfo_s *sinfo, void *cbdata)
 {
@@ -1210,6 +1216,81 @@ static int vfyCb(struct rpmsinfo_s *sinfo, void *cbdata)
     return (sinfo->rc == 0);
 }
 
+static ARGI_t initPkgDigests(FD_t fd)
+{
+    ARGI_t ids = NULL;
+    char *digests = rpmExpand("%{?_pkgverify_digests}", NULL);
+    ARGV_t vals = argvSplitString(digests, ":", 0);
+
+    for (ARGV_t v = vals; v && *v; v++) {
+	uint32_t alg = atoi(*v);
+	if (alg) {
+	    /* Try to ensure unique ids for the digests */
+	    uint32_t id = (RPMTAG_PACKAGEDIGESTS << 16) | alg;
+	    fdInitDigestID(fd, alg, id, 0);
+	    argiAdd(&ids, -1, id);
+	}
+    }
+
+    argvFree(vals);
+    free(digests);
+    return ids;
+}
+
+static void finiPkgDigests(FD_t fd, ARGI_t ids, Header auxh)
+{
+    for (int i = 0; i < argiCount(ids); i++) {
+	char *pkgdig = NULL;
+	uint32_t id = argiData(ids)[i];
+	fdFiniDigest(fd, id, (void **)&pkgdig, NULL, 1);
+	if (pkgdig) {
+	    uint32_t alg = 0xffff & id;
+	    headerPutString(auxh, RPMTAG_PACKAGEDIGESTS, pkgdig);
+	    headerPutUint32(auxh, RPMTAG_PACKAGEDIGESTALGOS, &alg, 1);
+	    free(pkgdig);
+	}
+    }
+    argiFree(ids);
+}
+
+static int verifyPackage(rpmts ts, rpmte p, struct rpmvs_s *vs, int vfylevel)
+{
+    struct vfydata_s vd = {
+	.msg = NULL,
+	.type = { -1, -1, -1, },
+	.vfylevel = vfylevel,
+    };
+    int verified = 0;
+    int prc = RPMRC_FAIL;
+    Header auxh = rpmteHeaderAux(p, 1);
+
+    FD_t fd = (FD_t)rpmtsNotify(ts, p, RPMCALLBACK_INST_OPEN_FILE, 0, 0);
+    if (fd != NULL) {
+	ARGI_t ids = initPkgDigests(fd);
+	prc = rpmpkgRead(vs, fd, NULL, NULL, &vd.msg);
+	int test = rpmtsFlags(ts) & RPMTRANS_FLAG_TEST;
+	finiPkgDigests(fd, ids, (test || prc) ? NULL : auxh);
+	rpmtsNotify(ts, p, RPMCALLBACK_INST_CLOSE_FILE, 0, 0);
+    }
+
+    if (prc == RPMRC_OK)
+	prc = rpmvsVerify(vs, RPMSIG_VERIFIABLE_TYPE, vfyCb, &vd);
+
+    /* Record verify result */
+    if (vd.type[RPMSIG_SIGNATURE_TYPE] == RPMRC_OK)
+	verified |= RPMSIG_SIGNATURE_TYPE;
+    if (vd.type[RPMSIG_DIGEST_TYPE] == RPMRC_OK)
+	verified |= RPMSIG_DIGEST_TYPE;
+    rpmteSetVerified(p, verified);
+
+    if (prc)
+	rpmteAddProblem(p, RPMPROB_VERIFY, NULL, vd.msg, 0);
+
+    vd.msg = _free(vd.msg);
+    headerFree(auxh);
+    return prc;
+}
+
 static int verifyPackageFiles(rpmts ts, rpm_loff_t total)
 {
     int rc = 0;
@@ -1218,7 +1299,6 @@ static int verifyPackageFiles(rpmts ts, rpm_loff_t total)
     rpmte p;
     rpm_loff_t oc = 0;
     rpmVSFlags vsflags = rpmtsVfyFlags(ts);
-    int vfylevel = rpmtsVfyLevel(ts);
 
     rpmtsNotify(ts, NULL, RPMCALLBACK_VERIFY_START, 0, total);
 
@@ -1226,36 +1306,10 @@ static int verifyPackageFiles(rpmts ts, rpm_loff_t total)
 
     pi = rpmtsiInit(ts);
     while ((p = rpmtsiNext(pi, TR_ADDED))) {
+	int vfylevel = rpmteVfyLevel(p);
 	struct rpmvs_s *vs = rpmvsCreate(vfylevel, vsflags, keyring);
-	struct vfydata_s vd = {
-	    .msg = NULL,
-	    .type = { -1, -1, -1, },
-	    .vfylevel = vfylevel,
-	};
-	int verified = 0;
-	int prc = RPMRC_FAIL;
-
 	rpmtsNotify(ts, p, RPMCALLBACK_VERIFY_PROGRESS, oc++, total);
-	FD_t fd = (FD_t)rpmtsNotify(ts, p, RPMCALLBACK_INST_OPEN_FILE, 0, 0);
-	if (fd != NULL) {
-	    prc = rpmpkgRead(vs, fd, NULL, NULL, &vd.msg);
-	    rpmtsNotify(ts, p, RPMCALLBACK_INST_CLOSE_FILE, 0, 0);
-	}
-
-	if (prc == RPMRC_OK)
-	    prc = rpmvsVerify(vs, RPMSIG_VERIFIABLE_TYPE, vfyCb, &vd);
-
-	/* Record verify result */
-	if (vd.type[RPMSIG_SIGNATURE_TYPE] == RPMRC_OK)
-	    verified |= RPMSIG_SIGNATURE_TYPE;
-	if (vd.type[RPMSIG_DIGEST_TYPE] == RPMRC_OK)
-	    verified |= RPMSIG_DIGEST_TYPE;
-	rpmteSetVerified(p, verified);
-
-	if (prc)
-	    rpmteAddProblem(p, RPMPROB_VERIFY, NULL, vd.msg, 0);
-
-	vd.msg = _free(vd.msg);
+	verifyPackage(ts, p, vs, vfylevel);
 	rpmvsFree(vs);
     }
     rpmtsNotify(ts, NULL, RPMCALLBACK_VERIFY_STOP, total, total);
@@ -1673,6 +1727,7 @@ rpmRC runScript(rpmts ts, rpmte te, Header h, ARGV_const_t prefixes,
      * (which is only happens with %prein and %preun scriptlets) or not.
      */
     if (rc != RPMRC_OK) {
+	ts->scriptError = 1;
 	if (warn_only) {
 	    rc = RPMRC_OK;
 	}
@@ -1828,7 +1883,7 @@ int rpmtsRun(rpmts ts, rpmps okProbs, rpmprobFilterFlags ignoreSet)
 	runTransScripts(ts, PKG_TRANSFILETRIGGERIN);
     }
     /* Final exit code */
-    rc = nfailed ? -1 : 0;
+    rc = (nfailed || ts->scriptError) ? -1 : 0;
 
 exit:
     /* Run post transaction hook for all plugins */

@@ -23,7 +23,7 @@ bool dbiIndexItem_s::operator == (const dbiIndexItem_s & other) const
 }
 
 /* Items retrieved from the index database.*/
-struct dbiIndexSet_s {
+struct RPM_GNUC_INTERNAL dbiIndexSet_s {
     vector<dbiIndexItem_s> recs;	/*!< array of records */
 };
 
@@ -101,6 +101,8 @@ int dbiIndexSetPruneSet(dbiIndexSet set, dbiIndexSet oset, int sorted)
     if (set->recs.empty() || oset == NULL || oset->recs.empty())
 	return 1;
 
+    if (set->recs.size() > 1 && !sorted)
+	dbiIndexSetSort(set);
     if (oset->recs.size() > 1 && !sorted)
 	dbiIndexSetSort(oset);
 
@@ -120,6 +122,8 @@ int dbiIndexSetFilterSet(dbiIndexSet set, dbiIndexSet oset, int sorted)
 	return num ? 0 : 1;
     }
 
+    if (set->recs.size() > 1 && !sorted)
+	dbiIndexSetSort(set);
     if (oset->recs.size() > 1 && !sorted)
 	dbiIndexSetSort(oset);
 

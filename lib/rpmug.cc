@@ -4,6 +4,7 @@
 #include <string>
 
 #include <errno.h>
+#include <rpm/argv.h>
 #include <rpm/rpmlog.h>
 #include <rpm/rpmstring.h>
 #include <rpm/rpmmacro.h>
@@ -53,7 +54,7 @@ static const char *grpfile(void)
  * Lookup an arbitrary field based on contents of another in a ':' delimited
  * file, such as /etc/passwd or /etc/group.
  */
-static int lookup_field(const char *path, const char *val, int vcol, int rcol,
+static int lookup_field_in_file(const char *path, const char *val, int vcol, int rcol,
 			char **ret)
 {
     int rc = -1; /* assume not found */
@@ -68,12 +69,11 @@ static int lookup_field(const char *path, const char *val, int vcol, int rcol,
     while ((str = fgets(buf, sizeof(buf), f)) != NULL) {
 	int nf = vcol > rcol ? vcol : rcol;
 	const char *fields[nf + 1];
-	char *tok, *save = NULL;
 	int col = -1;
 
-	while ((tok = strtok_r(str, ":", &save)) != NULL) {
-	    fields[++col] = tok;
-	    str = NULL;
+	ARGV_t tokens = argvSplitString(str, ":", ARGV_NONE);
+	for (ARGV_const_t tok = tokens; tok && *tok; tok++) {
+	    fields[++col] = *tok;
 	    if (col >= nf)
 		break;
 	}
@@ -84,10 +84,30 @@ static int lookup_field(const char *path, const char *val, int vcol, int rcol,
 		rc = 0;
 	    }
 	}
+	argvFree(tokens);
     }
 
     fclose(f);
 
+    return rc;
+}
+
+/*
+ * Lookup an arbitrary field based on contents of another in a ':' delimited
+ * file, such as /etc/passwd or /etc/group. Look at multiple files listed in
+ * path separated by colons
+ */
+static int lookup_field(const char *path, const char *val, int vcol, int rcol,
+			char **ret)
+{
+    ARGV_t paths = argvSplitString(path, ":", ARGV_SKIPEMPTY);
+    int rc = -1;
+    for (ARGV_t p = paths; *p; p++) {
+	rc = lookup_field_in_file(*p, val, vcol, rcol, ret);
+	if (!rc)
+	    break;
+    }
+    argvFree(paths);
     return rc;
 }
 

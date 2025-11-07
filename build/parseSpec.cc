@@ -127,7 +127,7 @@ static int matchTok(const char *token, const char *line)
 	SKIPNONSPACE(be);
 	if (be == b)
 	    break;
-	if (toklen != (be-b) || rstrncasecmp(token, b, (be-b)))
+	if (toklen != ptrlen(b,be) || rstrncasecmp(token, b, (be-b)))
 	    continue;
 	rc = 1;
 	break;
@@ -929,6 +929,7 @@ exit:
     return res;
 }
 
+static
 struct sectname_s sectList[] = {
     { "prep", SECT_PREP, PART_PREP, 0 },
     { "conf", SECT_CONF, PART_CONF, 0 },
@@ -987,7 +988,7 @@ int checkBuildsystem(rpmSpec spec, const char *name)
 }
 
 static rpmRC parseBuildsysSect(rpmSpec spec, const char *prefix,
-				struct sectname_s *sc, FD_t fd)
+				struct sectname_s *sc, FD_t fd, int *foundp)
 {
     rpmRC rc = RPMRC_OK;
 
@@ -1006,7 +1007,7 @@ static rpmRC parseBuildsysSect(rpmSpec spec, const char *prefix,
 				       "%", mn, " ",
 				       args ? args : "",
 				       "\n", NULL);
-	    size_t blen = strlen(buf);
+	    ssize_t blen = strlen(buf);
 	    if (Fwrite(buf, blen, 1, fd) < blen) {
 		rc = RPMRC_FAIL;
 		rpmlog(RPMLOG_ERR,
@@ -1015,6 +1016,7 @@ static rpmRC parseBuildsysSect(rpmSpec spec, const char *prefix,
 	    }
 	    free(buf);
 	    free(args);
+	    *foundp = 1;
 	}
 	free(mn);
     }
@@ -1038,9 +1040,10 @@ static rpmRC parseBuildsystem(rpmSpec spec)
 	}
 
 	for (struct sectname_s *sc = sectList; !rc && sc->name; sc++) {
-	    rc = parseBuildsysSect(spec, buildsystem, sc, fd);
-	    if (!rc && spec->sections[sc->section] == NULL)
-		rc = parseBuildsysSect(spec, "default", sc, fd);
+	    int found = 0;
+	    rc = parseBuildsysSect(spec, buildsystem, sc, fd, &found);
+	    if (!rc && !found)
+		rc = parseBuildsysSect(spec, "default", sc, fd, &found);
 	}
 
 	if (!rc)
@@ -1352,15 +1355,27 @@ static rpmRC finalizeSpec(rpmSpec spec)
     char *os = rpmExpand("%{_target_os}", NULL);
     char *optflags = rpmExpand("%{optflags}", NULL);
 
-    /* XXX Skip valid arch check if not building binary package */
-    if (!(spec->flags & RPMSPEC_ANYARCH) && checkForValidArchitectures(spec)) {
-	goto exit;
-    }
-
     fillOutMainPackage(spec->packages->header);
     /* Define group tag to something when group is undefined in main package*/
     if (!headerIsEntry(spec->packages->header, RPMTAG_GROUP)) {
 	headerPutString(spec->packages->header, RPMTAG_GROUP, "Unspecified");
+    }
+
+    spec->rpmformat = rpmExpandNumeric("%{?_rpmformat}");
+
+    if (spec->rpmformat != 4 && spec->rpmformat != 6) {
+	int default_rpmformat = 4;
+	rpmlog(RPMLOG_WARNING,
+		   _("invalid rpm format %d requested, using %d\n"),
+		   spec->rpmformat, default_rpmformat);
+	spec->rpmformat = 4;
+    }
+
+    if (spec->rpmformat >= 6) {
+	char *nevr = headerGetAsString(spec->sourcePackage->header,
+					RPMTAG_NEVR);
+	headerPutString(spec->packages->header, RPMTAG_SOURCENEVR, nevr);
+	free(nevr);
     }
 
     for (Package pkg = spec->packages; pkg != NULL; pkg = pkg->next) {
@@ -1368,7 +1383,6 @@ static rpmRC finalizeSpec(rpmSpec spec)
 	headerPutString(pkg->header, RPMTAG_PLATFORM, platform);
 	headerPutString(pkg->header, RPMTAG_OPTFLAGS, optflags);
 	headerPutString(pkg->header, RPMTAG_SOURCERPM, spec->sourceRpmName);
-
 
 	if (pkg != spec->packages) {
 	    copyInheritedTags(pkg->header, spec->packages->header);

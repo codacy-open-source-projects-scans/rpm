@@ -4,10 +4,9 @@ AT_BANNER([RPM verification])
 
 # ------------------------------
 # 
-AT_SETUP([dependency problems])
+RPMTEST_SETUP_RW([dependency problems])
 AT_KEYWORDS([verify])
 RPMTEST_CHECK([
-RPMDB_INIT
 
 runroot rpmbuild --quiet -bb \
 	--define "pkg one" \
@@ -27,12 +26,11 @@ RPMTEST_CLEANUP
 # Test file verify when no errors expected.
 # Ignore dependencies here as we're not testing for them, and
 # --nogroup --nouser is required when running tests as non-root.
-AT_SETUP([files with no problems])
+RPMTEST_SETUP_RW([files with no problems])
 AT_KEYWORDS([verify])
 RPMTEST_CHECK([
-RPMDB_INIT
 
-runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos \
+runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos --nosignature \
 	/data/RPMS/hello-2.0-1.i686.rpm
 runroot rpm -Va --nodeps ${VERIFYOPTS}
 ],
@@ -42,12 +40,11 @@ runroot rpm -Va --nodeps ${VERIFYOPTS}
 RPMTEST_CLEANUP
 
 # Test file verify when no errors expected in verbose mode.
-AT_SETUP([files with no problems in verbose mode])
+RPMTEST_SETUP_RW([files with no problems in verbose mode])
 AT_KEYWORDS([verify])
 RPMTEST_CHECK([
-RPMDB_INIT
 
-runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos \
+runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos --nosignature \
 	/data/RPMS/hello-2.0-1.i686.rpm
 runroot rpm -Vva --nodeps ${VERIFYOPTS}
 ],
@@ -62,10 +59,9 @@ runroot rpm -Vva --nodeps ${VERIFYOPTS}
 RPMTEST_CLEANUP
 
 # Test file verify when no errors expected in verbose mode.
-AT_SETUP([directory replaced with a directory symlink])
+RPMTEST_SETUP_RW([directory replaced with a directory symlink])
 AT_KEYWORDS([verify])
 RPMTEST_CHECK([
-RPMDB_INIT
 tf="${RPMTEST}"/opt/foo
 rm -rf "${RPMTEST}"/opt/*
 
@@ -91,11 +87,10 @@ runroot rpm -Vv replacetest
 [])
 RPMTEST_CLEANUP
 
-AT_SETUP([directory replaced with an invalid directory symlink])
+RPMTEST_SETUP_RW([directory replaced with an invalid directory symlink])
 AT_KEYWORDS([verify])
-AT_SKIP_IF([test `id -u` != 0 ])
+RPMTEST_SKIP_IF([test `id -u` != 0 ])
 RPMTEST_CHECK([
-RPMDB_INIT
 tf="${RPMTEST}"/opt/foo
 rm -rf "${RPMTEST}"/opt/*
 
@@ -121,12 +116,11 @@ runroot rpm -Vv replacetest
 RPMTEST_CLEANUP
 
 # Test file verify after mutilating the files a bit.
-AT_SETUP([verify from db, with problems present])
+RPMTEST_SETUP_RW([verify from db, with problems present])
 AT_KEYWORDS([verify])
 RPMTEST_CHECK([
-RPMDB_INIT
 
-runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos \
+runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos --nosignature \
 	/data/RPMS/hello-2.0-1.i686.rpm
 rm -f "${RPMTEST}"/usr/share/doc/hello-2.0/FAQ
 chmod u-x "${RPMTEST}"/usr/bin/hello
@@ -142,12 +136,11 @@ missing   d /usr/share/doc/hello-2.0/FAQ
 RPMTEST_CLEANUP
 
 # Test file verify from original package after mutilating the files a bit.
-AT_SETUP([verify from package, with problems present])
+RPMTEST_SETUP_RW([verify from package, with problems present])
 AT_KEYWORDS([verify])
 RPMTEST_CHECK([
-RPMDB_INIT
 
-runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos \
+runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos --nosignature \
 	/data/RPMS/hello-2.0-1.i686.rpm
 rm -f "${RPMTEST}"/usr/share/doc/hello-2.0/FAQ
 chmod u-x "${RPMTEST}"/usr/bin/hello
@@ -162,17 +155,16 @@ missing   d /usr/share/doc/hello-2.0/FAQ
 [])
 RPMTEST_CLEANUP
 
-AT_SETUP([verify file attribute filtering])
+RPMTEST_SETUP_RW([verify file attribute filtering])
 AT_KEYWORDS([query])
 RPMTEST_CHECK([
-RPMDB_INIT
 
 runroot rpmbuild -bb --quiet \
   /data/SPECS/vattrtest.spec
 
 runroot rpm -U /build/RPMS/noarch/vattrtest-1.0-1.noarch.rpm
-runroot_other touch /opt/vattrtest/g
-runroot_other chmod 644 /opt/vattrtest/g
+runroot touch /opt/vattrtest/g
+runroot chmod 644 /opt/vattrtest/g
 
 cmd="rpm -Vv ${VERIFYOPTS}"
 for filter in --noconfig --noghost --noartifact -A -c -d -L; do
@@ -221,9 +213,8 @@ done
 RPMTEST_CLEANUP
 
 # Test verify script success & failure behavior
-AT_SETUP([verifyscript])
+RPMTEST_SETUP_RW([verifyscript])
 AT_KEYWORDS([verify])
-RPMDB_INIT
 
 runroot rpmbuild --quiet -bb /data/SPECS/verifyscript.spec
 runroot rpm -U --nodeps /build/RPMS/noarch/verifyscript-1.0-1.noarch.rpm
@@ -248,10 +239,9 @@ RPMTEST_CLEANUP
 
 # ------------------------------
 # shared file timestamp behavior
-AT_SETUP([shared file timestamp behavior])
+RPMTEST_SETUP_RW([shared file timestamp behavior])
 AT_KEYWORDS([verify])
 RPMTEST_CHECK([
-RPMDB_INIT
 
 # create packages sharing a file but with different timestamp
 for p in "one" "two"; do
@@ -274,9 +264,8 @@ runroot rpm -Va ${VERIFYOPTS}
 RPMTEST_CLEANUP
 
 # ------------------------------
-AT_SETUP([minimize writes (files)])
+RPMTEST_SETUP_RW([minimize writes (files)])
 AT_KEYWORDS([upgrade verify min_writes])
-RPMDB_INIT
 
 for v in "1.0" "2.0"; do
     runroot rpmbuild --quiet -bb \
@@ -295,7 +284,7 @@ for v in "3.0" "4.0"; do
 done
 
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 tf="${RPMTEST}"/opt/foo
 rm -rf "${tf}"*
 
@@ -343,7 +332,7 @@ fox
 [])
 
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 tf="${RPMTEST}"/opt/foo
 rm -rf "${tf}"*
 
@@ -399,14 +388,12 @@ fox
 [])
 RPMTEST_CLEANUP
 
-AT_SETUP([minimize writes (hardlinks)])
+RPMTEST_SETUP_RW([minimize writes (hardlinks)])
 AT_KEYWORDS([upgrade verify min_writes])
-RPMDB_INIT
 for v in "0" "1"; do
     runroot rpmbuild --quiet -bb --define "ver ${v}" /data/SPECS/hlbreak.spec
 done
 RPMTEST_CHECK([
-RPMDB_INIT
 runroot rpm -U --define "_minimize_writes 1" /build/RPMS/noarch/hlbreak-0-0.noarch.rpm
 runroot rpm -Vav ${VERIFYOPTS}
 runroot rpm -U --define "_minimize_writes 1" /build/RPMS/noarch/hlbreak-1-0.noarch.rpm
@@ -421,9 +408,8 @@ runroot rpm -Vav ${VERIFYOPTS}
 RPMTEST_CLEANUP
 
 
-AT_SETUP([minimize writes (symlinks)])
+RPMTEST_SETUP_RW([minimize writes (symlinks)])
 AT_KEYWORDS([upgrade verify min_writes])
-RPMDB_INIT
 for v in "1.0" "2.0"; do
     runroot rpmbuild --quiet -bb \
         --define "ver $v" \
@@ -441,7 +427,7 @@ for v in "3.0" "4.0"; do
 done
 
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 tf="${RPMTEST}"/opt/foo
 rm -rf "${tf}"*
 
@@ -486,7 +472,7 @@ fox
 [])
 
 RPMTEST_CHECK([
-RPMDB_INIT
+RPMDB_RESET
 tf="${RPMTEST}"/opt/foo
 rm -rf "${tf}" "${tf}".rpm*
 
@@ -539,10 +525,9 @@ fox
 [])
 RPMTEST_CLEANUP
 
-AT_SETUP([minimize writes (SUID files)])
+RPMTEST_SETUP_RW([minimize writes (SUID files)])
 AT_KEYWORDS([upgrade verify min_writes])
 RPMTEST_CHECK([
-RPMDB_INIT
 tf="${RPMTEST}"/opt/foo
 rm -rf "${tf}" "${tf}".rpm*
 
@@ -573,13 +558,12 @@ runroot rpm -V ${VERIFYOPTS} replacetest
 [])
 RPMTEST_CLEANUP
 
-AT_SETUP([verify empty/no capabilities 1])
+RPMTEST_SETUP_RW([verify empty/no capabilities 1])
 AT_KEYWORDS([verify])
-AT_SKIP_IF([$CAP_DISABLED])
+RPMTEST_SKIP_IF([$CAP_DISABLED])
 RPMTEST_CHECK([
-RPMDB_INIT
 
-runroot rpm -U --nocaps --ignoreos \
+runroot rpm -U --nocaps --ignoreos --nosignature \
 	/data/RPMS/capstest-1.0-1.noarch.rpm
 
 runroot rpm -Va ${VERIFYOPTS}
@@ -592,13 +576,12 @@ runroot rpm -Va ${VERIFYOPTS}
 RPMTEST_CLEANUP
 
 
-AT_SETUP([verify empty/no capabilities 2])
+RPMTEST_SETUP_RW([verify empty/no capabilities 2])
 AT_KEYWORDS([verify])
-AT_SKIP_IF([$CAP_DISABLED])
+RPMTEST_SKIP_IF([$CAP_DISABLED])
 RPMTEST_CHECK([
-RPMDB_INIT
 
-runroot rpm -U --nocaps --nodeps --noscripts --ignorearch --ignoreos \
+runroot rpm -U --nocaps --nodeps --noscripts --ignorearch --ignoreos --nosignature \
 	/data/RPMS/hello-2.0-1.i686.rpm
 
 runroot rpm -Va ${VERIFYOPTS} --nodeps | grep "/bin/hello"
@@ -608,30 +591,63 @@ runroot rpm -Va ${VERIFYOPTS} --nodeps | grep "/bin/hello"
 [])
 RPMTEST_CLEANUP
 
-AT_SETUP([rpm --restore])
+RPMTEST_SETUP_RW([rpm --restore])
 AT_KEYWORDS([verify restore])
 RPMTEST_CHECK([
-RPMDB_INIT
 
-runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos \
+runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos --nosignature \
 	/data/RPMS/hello-2.0-1.i686.rpm
-runroot_other touch /usr/share/doc/hello-2.0/FAQ
-runroot_other chmod a-x /usr/bin/hello
+runroot touch /usr/share/doc/hello-2.0/FAQ
+runroot chmod a-x /usr/bin/hello
+runroot rpm --restore --percent --test hello
 runroot rpm -Va --nodeps ${VERIFYOPTS}
-runroot rpm --restore hello
+runroot rpm --restore --hash hello
+],
+[0],
+[%% 0.000000
+.M.......    /usr/bin/hello
+.......T.  d /usr/share/doc/hello-2.0/FAQ
+########################################
+Updating / installing...
+########################################
+],
+[])
+
+RPMTEST_CHECK([
 runroot rpm -Va --nodeps ${VERIFYOPTS}
+],
+[0],
+[],
+[])
+
+RPMTEST_CHECK([
+# same as above but with more content in the rpmdb, in particular gpg-pubkey's
+echo "%_keyring rpmdb" >> "${RPMTEST}"/"${RPMSYSCONFDIR}"/macros.testenv
+runroot rpmkeys --import /data/keys/rpm.org-rsa-2048-test.pub
+runroot rpm -U --nodeps --noscripts --ignorearch --ignoreos --nosignature \
+	/data/RPMS/hlinktest-1.0-1.noarch.rpm
+runroot touch /usr/share/doc/hello-2.0/FAQ
+runroot chmod a-x /usr/bin/hello
+runroot rpm -Va --nodeps ${VERIFYOPTS}
+runroot rpm -a --restore
 ],
 [0],
 [.M.......    /usr/bin/hello
 .......T.  d /usr/share/doc/hello-2.0/FAQ
 ],
 [])
+
+RPMTEST_CHECK([
+runroot rpm -Va --nodeps ${VERIFYOPTS}
+],
+[0],
+[],
+[])
 RPMTEST_CLEANUP
 
-AT_SETUP([test for %verify in %files])
+RPMTEST_SETUP_RW([test for %verify in %files])
 AT_KEYWORDS([verify])
 RPMTEST_CHECK([
-RPMDB_INIT
 
 runroot rpmbuild --quiet -bb /data/SPECS/verifyfiles.spec
 runroot rpm -i /build/RPMS/noarch/verifyfiles-1.0-1.noarch.rpm
@@ -642,5 +658,22 @@ runroot rpm -Vv ${VERIFYOPTS} verifyfiles
 [.M.......    /test-verify1
 .........    /test-verify2
 ],
+[])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP_RW([alternative passwd location])
+AT_KEYWORDS([verify])
+
+runroot rpmbuild -bb --quiet /data/SPECS/klang.spec
+runroot rpm -Uvh /build/RPMS/noarch/klang-*
+echo "klangd:x:1111:1111::/:/sbin/nologin\n" >> ${RPMTEST}/usr/lib/passwd
+echo "klangd:x:8888:" >> ${RPMTEST}/usr/lib/group
+
+RPMTEST_CHECK([
+runroot chown 1111:8888 /var/lib/klangd
+runroot rpm -D "_passwd_path /usr/lib/passwd:/etc/passwd" -D "_group_path /usr/lib/group:/etc/group" -V klang-server
+],
+[0],
+[],
 [])
 RPMTEST_CLEANUP

@@ -7,7 +7,7 @@ title: rpm.org - Automating patch application in specs
 ## %autosetup description
 
 Starting with version 4.11, RPM has a set of new macros to further
-automatesource unpacking and patch application. Previously one had to
+automate source unpacking and patch applications. Previously one had to
 manually specify each patch to be applied, eg
 
 ```
@@ -47,8 +47,8 @@ natural than with gendiff.
 
 ## %autosetup options
 
-Generally `%autosetup` accepts the same arguments as %setup does. The notable
-exceptions are
+Generally `%autosetup` accepts the same arguments as [%setup](spec.md#setup)
+does. The notable exceptions are
 
 * `%autosetup` defaults to quiet operation, so `-q` is not needed or accepted.
   Use `-v` to enable verbose source unpacking if needed.
@@ -86,13 +86,13 @@ options are
 
 Some examples:
 
-# Apply patches with number >= 100
+### Apply patches with number >= 100
 `%autopatch -m 100`
-# Apply patches with number <= 400
+### Apply patches with number <= 400
 `%autopatch -M 400`
-# Apply patches 80 to 99, inclusive
+### Apply patches 80 to 99, inclusive
 `%autopatch -m 80 -M 99`
-# Apply patches 1, 4 and 6
+### Apply patches 1, 4 and 6
 `%autopatch 1 4 6`
 
 ## Automating patch (and source) declarations
