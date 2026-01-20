@@ -1182,7 +1182,7 @@ struct vfydata_s {
 };
 }
 
-static int sortRC(int rc)
+int sortRC(int rc)
 {
     switch (rc) {
     case RPMRC_OK: return 0;
@@ -1287,7 +1287,7 @@ static int verifyPackage(rpmts ts, rpmte p, struct rpmvs_s *vs, int vfylevel)
     }
 
     if (prc == RPMRC_OK)
-	prc = rpmvsVerify(vs, vfylevel, vfyCb, &vd);
+	prc = rpmvsVerify(vs, RPMSIG_VERIFIABLE_TYPE, vfyCb, &vd);
 
     /* Record verify result */
     if (vd.type[RPMSIG_SIGNATURE_TYPE] == RPMRC_OK)
@@ -1296,8 +1296,11 @@ static int verifyPackage(rpmts ts, rpmte p, struct rpmvs_s *vs, int vfylevel)
 	verified |= RPMSIG_DIGEST_TYPE;
     rpmteSetVerified(p, verified);
 
-    if (prc)
+    if (prc) {
+	if (vd.msg == NULL)
+	    vd.msg = xstrdup(_("no verifiable digest or signature available"));
 	rpmteAddProblem(p, RPMPROB_VERIFY, NULL, vd.msg, 0);
+    }
 
     vd.msg = _free(vd.msg);
     headerFree(auxh);
