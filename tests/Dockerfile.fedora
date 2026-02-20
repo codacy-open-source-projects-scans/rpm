@@ -19,8 +19,6 @@ RUN dnf -y install \
   debugedit \
   doxygen \
   make \
-  gcc \
-  gcc-c++ \
   git-core \
   glibc-gconv-extra \
   zlib-devel \
@@ -56,8 +54,6 @@ RUN dnf -y install \
   scdoc \
   scd2html \
   sequoia-sq \
-  libasan \
-  libubsan \
   nss-altfiles
 # If updates to specific packages are needed, do it here
 # RUN dnf -y --enablerepo=updates install ...
@@ -68,6 +64,24 @@ RUN dnf -y install \
     gdb \
     strace \
     valgrind
+
+# Install the requested toolchain
+ARG TOOLCHAIN=gcc
+RUN case "$TOOLCHAIN" in \
+        gcc) \
+            dnf -y install \
+                gcc \
+                gcc-c++ \
+                libasan \
+                libubsan \
+        ;; \
+        clang) \
+            dnf -y install \
+                clang \
+                compiler-rt \
+                libomp-devel \
+        ;; \
+    esac
 
 RUN dnf clean all
 
@@ -98,19 +112,7 @@ WORKDIR /srv/rpm
 COPY . .
 
 WORKDIR /srv/build
-ENV CFLAGS="-Og -g"
-ENV CXXFLAGS="-Og -g"
-RUN cmake \
-	-DENABLE_WERROR=ON \
-	-DENABLE_ASAN=ON \
-	-DENABLE_UBSAN=ON \
-	-DENABLE_BDB_RO=ON \
-	-DWITH_FSVERITY=ON \
-	-DWITH_IMAEVM=ON \
-	-DWITH_DOXYGEN=ON \
-	-DENABLE_TESTSUITE=ON \
-	-DMKTREE_BACKEND=rootfs \
-	../rpm
+RUN cmake --preset dev-${TOOLCHAIN} -DMKTREE_BACKEND=rootfs ../rpm
 RUN make -j$(nproc) tree
 
 RUN rm -rf /srv/{rpm,build}
