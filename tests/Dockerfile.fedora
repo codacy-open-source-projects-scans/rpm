@@ -1,5 +1,5 @@
 # Supported Fedora releases: 43 44
-FROM registry.fedoraproject.org/fedora:43 AS base
+FROM quay.io/fedora/fedora:43 AS base
 LABEL com.github.containers.toolbox="true"
 MAINTAINER rpm-maint@lists.rpm.org
 
@@ -56,7 +56,7 @@ RUN dnf -y install \
   sequoia-sq \
   nss-altfiles
 # If updates to specific packages are needed, do it here
-# RUN dnf -y --enablerepo=updates install ...
+RUN dnf -y --enablerepo=updates install rpm-sequoia-devel-1.10.1
 
 # Install some development tools
 RUN dnf -y install \
