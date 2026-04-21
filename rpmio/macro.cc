@@ -50,7 +50,11 @@ enum macroFlags_e {
     ME_PARSE	= (1 << 3),
     ME_FUNC	= (1 << 4),
     ME_QUOTED	= (1 << 5),
+    ME_ONESHOT	= (1 << 6),
 };
+
+/* bitmask of all modifiers */
+#define ME_MODIFIER (ME_LITERAL|ME_ONESHOT)
 
 /*! The structure used to store a macro. */
 struct rpmMacroEntry_s {
@@ -131,6 +135,9 @@ static int expandQuotedMacro(rpmMacroBuf mb, const char *src);
 static void pushMacro(rpmMacroContext mc,
 	const std::string & n, const char * o, const std::string & b,
 	int level, int flags);
+static void pushMacroAny(rpmMacroContext mc,
+	const string & n, const char * o, const string & b,
+	macroFunc f, void *priv, int nargs, int level, int flags);
 static void popMacro(rpmMacroContext mc, const std::string & n);
 static int loadMacroFile(rpmMacroContext mc, const std::string fn);
 /* =============================================================== */
@@ -715,6 +722,9 @@ doDefine(rpmMacroBuf mb, const std::string & str, int level, int expandbody, siz
 	    /* A %global literal must not expand */
 	    expandbody = 0;
 	    break;
+	case 'o':
+	    flags |= ME_ONESHOT;
+	    break;
 	default:
 	    rpmMacroBufErr(mb, 1,
 			    _("Macro %%%s has illegal modifier %c\n"), n, m);
@@ -724,7 +734,13 @@ doDefine(rpmMacroBuf mb, const std::string & str, int level, int expandbody, siz
     }
 
     /* Check for modifier compatibility */
-    if (o && (flags & ME_LITERAL)) {
+    if (o && (flags & (ME_LITERAL|ME_ONESHOT))) {
+	rpmMacroBufErr(mb, 1, _("Macro %%%s has modifiers incompatible "
+				"with parametric macros\n"), n);
+	goto exit;
+    }
+
+    if ((flags & ME_LITERAL) && (flags & ME_ONESHOT)) {
 	rpmMacroBufErr(mb, 1, _("Macro %%%s has incompatible modifiers\n"), n);
 	goto exit;
     }
@@ -1489,6 +1505,7 @@ doMacro(rpmMacroBuf mb, rpmMacroEntry me, ARGV_t args, size_t *parsed)
 	if (me->body && *me->body)
 	    rpmMacroBufAppendStr(mb, me->body);
     } else if (me->body && *me->body) {
+	size_t mblen = mb->buf.size();
 	/* Setup args for "%name " macros with opts */
 	if (args != NULL)
 	    setupArgs(mb, me, args);
@@ -1499,6 +1516,13 @@ doMacro(rpmMacroBuf mb, rpmMacroEntry me, ARGV_t args, size_t *parsed)
 	/* Free args for "%name " macros with opts */
 	if (args != NULL)
 	    freeArgs(mb);
+	/* Push the literal expansion on top of one-shot macro on first use */
+	if (me->flags & ME_ONESHOT) {
+	    int flags = me->flags | ME_LITERAL;
+	    flags &= ~ME_ONESHOT;
+	    pushMacroAny(mb->mc, me->name, me->opts, mb->buf.substr(mblen),
+			 me->func, me->priv, me->nargs, me->level, flags);
+	}
     }
 
     /* postprocess macros that contain quotes */
@@ -2125,6 +2149,14 @@ void macros::dump(FILE *fp)
 	auto const & me = entry.second.top();
 	fprintf(fp, "%3d%c %s", me.level,
 		    ((me.flags & ME_USED) ? '=' : ':'), me.name);
+	if (me.flags & ME_MODIFIER) {
+	    std::string mods;
+	    if (me.flags & ME_LITERAL)
+		mods += "l";
+	    if (me.flags & ME_ONESHOT)
+		mods += "o";
+	    fprintf(fp, "<%s>", mods.c_str());
+	}
 	if (me.opts && *me.opts)
 		fprintf(fp, "(%s)", me.opts);
 	if (me.body && *me.body)
