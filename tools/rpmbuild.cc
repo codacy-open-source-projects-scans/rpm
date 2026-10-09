@@ -369,6 +369,8 @@ static int isSpecFile(const char * specfile)
 static char * getTarSpec(const char *arg)
 {
     char *specFile = NULL;
+    char *specDir = NULL;
+    char *specBase = NULL;
     char *specFinal = NULL;
     const char **spec;
     char tarbuf[BUFSIZ];
@@ -385,11 +387,11 @@ static char * getTarSpec(const char *arg)
 	char *cmd;
 	int specfiles = 0;
 
-	cmd = rpmExpand("%{uncompress: ", arg, "} | ",
+	cmd = rpmExpand("%{uncompress: \"$1\" } | ",
 			"%{__tar} xOvof - --wildcards ", *spec,
 			" 2>&1 > ", specFile, NULL);
 
-	if (!(fp = popen(cmd, "r"))) {
+	if (!(fp = rpopen(cmd, arg))) {
 	    rpmlog(RPMLOG_ERR, _("Failed to open tar pipe: %m\n"));
 	} else {
 	    char *fok;
@@ -402,7 +404,7 @@ static char * getTarSpec(const char *arg)
 		}
 		specfiles++;
 	    }
-	    pclose(fp);
+	    rpclose(fp);
 	    gotspec = (specfiles == 1) && isSpecFile(specFile);
 	    if (specfiles > 1) {
 		rpmlog(RPMLOG_ERR, _("Found more than one spec file in %s\n"), arg);
@@ -418,9 +420,11 @@ static char * getTarSpec(const char *arg)
     if (!gotspec) {
     	rpmlog(RPMLOG_ERR, _("Failed to read spec file from %s\n"), arg);
     } else {
+	specDir = rpmExpand("%{_specdir}", NULL);
+	specBase = basename(tarbuf);
 	/* remove trailing \n */
-	tarbuf[strlen(tarbuf)-1] = '\0';
-	specFinal = rpmExpand("%{_specdir}/%{basename:", tarbuf, "}", NULL);
+	specBase[strlen(specBase)-1] = '\0';
+	rasprintf(&specFinal, "%s/%s", specDir, specBase);
 	if (rename(specFile, specFinal)) {
 	    rpmlog(RPMLOG_ERR, _("Failed to rename %s to %s: %m\n"),
 		    specFile, specFinal);
@@ -431,6 +435,7 @@ static char * getTarSpec(const char *arg)
 
 exit:
     free(specFile);
+    free(specDir);
     Fclose(fd);
     return specFinal;
 }

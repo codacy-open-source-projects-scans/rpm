@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <filesystem>
 #include <string>
 
 #include <archive.h>
@@ -15,7 +16,10 @@
 #include <rpm/rpmlog.h>
 #include <rpm/rpmstring.h>
 
+#include "cliutils.hh"
 #include "debug.h"
+
+namespace fs = std::filesystem;
 
 static int extract = 0;
 static int dryrun = 0;
@@ -42,7 +46,7 @@ static struct poptOption optionsTable[] = {
     POPT_TABLEEND
 };
 
-struct archiveType_s {
+typedef const struct archiveType_s {
     int compressed;
     int extractable;
     const char *cmd;
@@ -50,7 +54,9 @@ struct archiveType_s {
     const char *quiet;
     const char *dest;
     int setTZ;
-} archiveTypes[] = {
+} archiveType;
+
+static archiveType const archiveTypes[] = {
     { COMPRESSED_NOT,	0,	"%{__cat}" ,	"",		"", "", 0 },
     { COMPRESSED_OTHER,	0,	"%{__gzip}",	"-dc",		"", "", 0 },
     { COMPRESSED_BZIP2,	0,	"%{__bzip2}",	"-dc",		"", "", 0 },
@@ -66,13 +72,13 @@ struct archiveType_s {
     { -1,		0,	NULL,		NULL,		NULL, 0 },
 };
 
-static const struct archiveType_s *getArchiver(const char *fn)
+static archiveType *getArchiver(const char *fn)
 {
-    const struct archiveType_s *archiver = NULL;
+    archiveType *archiver = NULL;
     rpmCompressedMagic compressed = COMPRESSED_NOT;
 
     if (rpmFileIsCompressed(fn, &compressed) == 0) {
-	for (const struct archiveType_s *at = archiveTypes; at->cmd; at++) {
+	for (archiveType *at = archiveTypes; at->cmd; at++) {
 	    if (compressed == at->compressed) {
 		archiver = at;
 		break;
@@ -83,15 +89,14 @@ static const struct archiveType_s *getArchiver(const char *fn)
     return archiver;
 }
 
-static char *doUncompress(const char *fn)
+static char *doUncompress(archiveType *at, const char *fn, const char *arg)
 {
     char *cmd = NULL;
-    const struct archiveType_s *at = getArchiver(fn);
     if (at) {
 	cmd = rpmExpand(at->setTZ ? "TZ=UTC " : "",
 			at->cmd, " ", at->unpack, NULL);
 	/* path must not be expanded */
-	cmd = rstrscat(&cmd, " ", fn, NULL);
+	cmd = rstrscat(&cmd, " ", arg, NULL);
     }
     return cmd;
 }
@@ -100,17 +105,18 @@ static char *doUncompress(const char *fn)
  * Detect if an archive has a single top level entry, and it's a directory.
  *
  * @param path	path of the archive
- * @return	only top level directory (if any),
- * 		NULL if it contains multiple top level entries or a single file
- * 		or on archive error
+ * @return	1 if the archive has a single top level, directory entry,
+ * 		0 otherwise,
+ * 		-1 on archive error
  */
-static char * singleRoot(const char *path)
+static int singleRoot(const char *path)
 {
 	struct archive *a;
 	struct archive_entry *entry;
 	int r, ret = -1, rootLen;
+	const char *p = NULL;
+	const char *sep = NULL;
 	char *rootName = NULL;
-	char *sep = NULL;
 
 	a = archive_read_new();
 	archive_read_support_filter_all(a);
@@ -122,40 +128,44 @@ static char * singleRoot(const char *path)
 	if (archive_read_next_header(a, &entry) != ARCHIVE_OK) {
 	    goto afree;
 	}
-	rootName = xstrdup(archive_entry_pathname(entry));
-	sep = strchr(rootName, '/');
-	if (sep == NULL) {
+
+	/* Extract the lead directory from the first entry */
+	p = archive_entry_pathname(entry);
+	sep = strchr(p, '/');
+	if (sep) {
+	    rootName = xstrdup(p);
+	    rootLen = sep - p + 1;
+	} else if (archive_entry_filetype(entry) == AE_IFDIR) {
+	    rootName = rstrscat(NULL, p, "/", NULL);
+	    rootLen = strlen(rootName);
+	} else {
 	    /* No directories in the pathname */
 	    ret = 0;
 	    goto afree;
 	}
 
 	/* Do all entries in the archive start with the same lead directory? */
-	rootLen = sep - rootName + 1;
 	while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
-	    const char *p = archive_entry_pathname(entry);
+	    p = archive_entry_pathname(entry);
 	    if (strncmp(rootName, p, rootLen)) {
 		ret = 0;
 		goto afree;
 	    }
 	}
-	*sep = '\0';
+
 	ret = 1;
 
 afree:
+	free(rootName);
 	r = archive_read_free(a);
 	if (r != ARCHIVE_OK)
 	    ret = -1;
 
-	if (ret != 1)
-	    rootName = _free(rootName);
-
-	return rootName;
+	return ret;
 }
 
-static char *doUntar(const char *fn)
+static char *doUntar(archiveType *at, int sr, const char *fn, const char *arg)
 {
-    const struct archiveType_s *at = NULL;
     char *buf = NULL;
     char *tar = NULL;
     const char *taropts = rpmIsVerbose() ? "-xvvof" : "-xof";
@@ -163,14 +173,12 @@ static char *doUntar(const char *fn)
     char *stripcd = NULL;
     int needtar = 0;
 
-    if ((at = getArchiver(fn)) == NULL)
+    if (at == NULL)
 	goto exit;
 
     needtar = (at->extractable == 0);
 
     if (dstpath) {
-	char * sr = singleRoot(fn);
-
 	/* if the archive has multiple entries, just extract it into the
 	 * specified destination path, otherwise also strip the first path
 	 * entry
@@ -188,8 +196,8 @@ static char *doUntar(const char *fn)
 		rasprintf(
 		    &moveup,
 		    " && "
-		    "(shopt -s dotglob; mv \"$tmp\"/'%s'/* '%s') && "
-		    "rmdir \"$tmp\"/'%s' \"$tmp\" ", sr, dstpath, sr);
+		    "(shopt -s dotglob; mv \"$tmp\"/*/* '%s') && "
+		    "rmdir \"$tmp\"/* \"$tmp\" ", dstpath);
 		rasprintf(&stripcd, "%s\"$tmp\" %s", at->dest, moveup);
 		free(moveup);
 	    } else {
@@ -197,7 +205,6 @@ static char *doUntar(const char *fn)
 		rasprintf(&stripcd, "%s'%s'", at->dest, dstpath);
 	    }
 	}
-	free(sr);
     } else {
 	mkdir = xstrdup("");
 	stripcd = xstrdup("");
@@ -210,29 +217,21 @@ static char *doUntar(const char *fn)
 			   at->cmd, " ", at->unpack, " ",
 			   rpmIsVerbose() ? "" : at->quiet, NULL);
 	if (needtar) {
-	    rasprintf(&buf, "%s %s '%s' | %s %s - %s", mkdir, zipper, fn, tar, taropts, stripcd);
+	    rasprintf(&buf, "%s %s %s | %s %s - %s", mkdir, zipper, arg, tar, taropts, stripcd);
 	} else if (at->compressed == COMPRESSED_GEM) {
-	    char *tmp = xstrdup(fn);
-	    const char *bn = basename(tmp);
-	    size_t nvlen = strlen(bn) - 3;
+	    auto bn = fs::path(fn).stem();
 	    char *gem = rpmGetPath("%{__gem}", NULL);
-	    char *gemspec = NULL;
-	    std::string gemnameversion(bn, nvlen);
 
-	    gemspec = rpmGetPath("", gemnameversion.c_str(), ".gemspec", NULL);
+	    rasprintf(&buf, "%s %s && %s spec %s --ruby > '%s.gemspec'",
+			zipper, arg, gem, arg, bn.c_str());
 
-	    rasprintf(&buf, "%s '%s' && %s spec '%s' --ruby > '%s'",
-			zipper, fn, gem, fn, gemspec);
-
-	    free(gemspec);
 	    free(gem);
-	    free(tmp);
 	} else {
-	    rasprintf(&buf, "%s%s '%s' %s", mkdir, zipper, fn, stripcd);
+	    rasprintf(&buf, "%s%s %s %s", mkdir, zipper, arg, stripcd);
 	}
 	free(zipper);
     } else {
-	rasprintf(&buf, "%s %s %s '%s' %s", mkdir, tar, taropts, fn, stripcd);
+	rasprintf(&buf, "%s %s %s %s %s", mkdir, tar, taropts, arg, stripcd);
     }
 
 exit:
@@ -247,7 +246,10 @@ int main(int argc, char *argv[])
     int ec = EXIT_FAILURE;
     poptContext optCon = NULL;
     const char *arg = NULL;
+    const char *fnarg = "\"$1\"";
     char *cmd = NULL;
+    archiveType *at = NULL;
+    int sr = 0;
 
     optCon = rpmcliInit(argc, argv, optionsTable);
 
@@ -256,24 +258,40 @@ int main(int argc, char *argv[])
 	goto exit;
     }
 
-    cmd = extract ? doUntar(arg) : doUncompress(arg);
+    at = getArchiver(arg);
+    if (extract) {
+	if (dstpath)
+	    sr = singleRoot(arg);
+	cmd = doUntar(at, sr, arg, fnarg);
+    } else {
+	cmd = doUncompress(at, arg, fnarg);
+    }
+
     if (cmd) {
 	FILE *inp = NULL;
 
-	if (rpmIsVerbose() || dryrun)
-	    fprintf(stderr, "%s\n", cmd);
+	if (rpmIsVerbose() || dryrun) {
+	    char *dryarg = NULL;
+	    char *drycmd = NULL;
+	    rasprintf(&dryarg, "'%s'", arg);
+	    drycmd = extract ? doUntar(at, sr, arg, dryarg) :
+			       doUncompress(at, arg, dryarg);
+	    fprintf(stderr, "%s\n", drycmd);
+	    free(drycmd);
+	    free(dryarg);
+	}
 
 	if (dryrun) {
 	    ec = EXIT_SUCCESS;
 	    goto exit;
 	}
 
-	inp = popen(cmd, "r");
+	inp = rpopen(cmd, arg);
 	if (inp) {
 	    int status, c;
 	    while ((c = fgetc(inp)) != EOF)
 		fputc(c, stdout);
-	    status = pclose(inp);
+	    status = rpclose(inp);
 	    if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
 		ec = EXIT_SUCCESS;
 	}

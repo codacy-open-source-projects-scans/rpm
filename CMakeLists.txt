@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.18)
 
 project(rpm
-	VERSION 6.0.90
+	VERSION 6.1.90
 	DESCRIPTION "The RPM Package Manager"
 	HOMEPAGE_URL "http://rpm.org"
 	LANGUAGES C CXX
@@ -52,7 +52,7 @@ set(RPM_VENDOR "vendor" CACHE STRING "rpm vendor string")
 # - incrementing a more significant version segment resets changes to
 #   any less significant segments
 set(RPM_SOVERSION 10)
-set(RPM_LIBVERSION ${RPM_SOVERSION}.6.0)
+set(RPM_LIBVERSION ${RPM_SOVERSION}.8.0)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -188,6 +188,7 @@ include(CheckLibraryExists)
 include(CheckFunctionExists)
 include(CheckIncludeFile)
 include(CheckCCompilerFlag)
+include(CheckLinkerFlag)
 include(CheckVariableExists)
 
 set(OPTFUNCS
@@ -272,7 +273,7 @@ endif()
 list(APPEND db_backends dummy)
 
 if (ENABLE_PYTHON)
-	find_package(Python3 3.10 COMPONENTS Interpreter Development REQUIRED)
+	find_package(Python3 3.10 COMPONENTS Interpreter Development.Module REQUIRED)
 endif()
 
 if (WITH_CAP)
@@ -310,9 +311,6 @@ endif()
 
 find_program(AWK gawk mawk nawk awk REQUIRED)
 mark_as_advanced(AWK)
-
-find_program(FIND_DEBUGINFO find-debuginfo)
-mark_as_advanced(FIND_DEBUGINFO)
 
 find_program(PODMAN podman)
 mark_as_advanced(PODMAN)
@@ -434,12 +432,15 @@ if (ENABLE_ASAN OR ENABLE_UBSAN)
 endif()
 
 # try to ensure some compiler sanity and hardening options where supported
-foreach (flag -fno-strict-overflow -fno-delete-null-pointer-checks -fhardened)
+foreach (flag -fno-strict-overflow -fno-delete-null-pointer-checks -fhardened -fvisibility=hidden)
 	check_c_compiler_flag(${flag} compiler-supports${flag})
 	if (compiler-supports${flag})
 		add_compile_options(${flag})
 	endif()
 endforeach()
+
+check_linker_flag(CXX "-Wl,--version-script=${CMAKE_SOURCE_DIR}/lib/librpm.ver"
+		  HAVE_LINKER_VERSION_SCRIPT)
 
 # generated sources
 include_directories(${CMAKE_BINARY_DIR})
@@ -490,6 +491,14 @@ install(DIRECTORY DESTINATION ${RPM_CONFIGDIR}/lua)
 install(DIRECTORY DESTINATION ${RPM_CONFIGDIR}/macros.d)
 install(DIRECTORY DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/rpm)
 install(FILES CONTRIBUTING.md COPYING CREDITS INSTALL README TYPE DOC)
+
+# Compat links for commands that moved from /usr/lib/rpm to bin
+foreach(cmd rpmuncompress rpm-setup-autosign)
+	install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} \
+		-E create_symlink \
+			../../${CMAKE_INSTALL_BINDIR}/${cmd} \
+			\$ENV{DESTDIR}/${RPM_CONFIGDIR}/${cmd})")
+endforeach()
 
 add_custom_target(ChangeLog
 		   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}

@@ -108,6 +108,22 @@ rpm --eval '%define _ that'
 [],
 [error: Macro %_ has illegal name (%define)
 ])
+
+RPMTEST_CHECK([
+rpm --eval '%define this'
+],
+[1],
+[],
+[error: Macro %this has empty body
+])
+
+RPMTEST_CHECK([
+rpm --eval '%define this {}'
+],
+[1],
+[],
+[error: Macro %this has empty body
+])
 RPMTEST_CLEANUP
 
 # ------------------------------
@@ -489,7 +505,7 @@ runroot rpmuncompress --dry-run /data/SOURCES/test-1.2.3.car
 ],
 [0],
 [ignore],
-[/usr/bin/car extract -f /data/SOURCES/test-1.2.3.car
+[/usr/bin/car extract -f '/data/SOURCES/test-1.2.3.car'
 ])
 
 RPMTEST_CHECK([
@@ -497,8 +513,67 @@ runroot rpmuncompress --dry-run /data/SOURCES/test-1.2.3.carv2
 ],
 [0],
 [ignore],
-[/usr/bin/car extract -f /data/SOURCES/test-1.2.3.carv2
+[/usr/bin/car extract -f '/data/SOURCES/test-1.2.3.carv2'
 ])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP([uncompress 5])
+AT_KEYWORDS([macros rpmuncompress])
+RPMTEST_CHECK([
+runroot rpmuncompress -n /data/SOURCES/hola-0.1.3.gem
+],
+[0],
+[ignore],
+[/usr/bin/gem unpack '/data/SOURCES/hola-0.1.3.gem'
+])
+
+RPMTEST_CHECK([
+runroot rpmuncompress -nx /data/SOURCES/hola-0.1.3.gem
+],
+[0],
+[ignore],
+[/usr/bin/gem unpack  '/data/SOURCES/hola-0.1.3.gem' && /usr/bin/gem spec '/data/SOURCES/hola-0.1.3.gem' --ruby > 'hola-0.1.3.gemspec'
+])
+RPMTEST_CLEANUP
+
+# CVE-2026-84838: shell injection (quote escape) via doUncompress()
+RPMTEST_SETUP_RW([uncompress 6 (evil)])
+AT_KEYWORDS([build])
+
+RPMTEST_CHECK([
+cp /data/SOURCES/hello-2.0.tar.gz $RPMTEST/"'; touch gotcha; #.gz'"
+runroot rpmuncompress "'; touch gotcha; #.gz'" >/dev/null
+],
+[ignore],
+[],
+[ignore])
+
+RPMTEST_CHECK([
+test -f $RPMTEST/gotcha
+],
+[1],
+[],
+[])
+RPMTEST_CLEANUP
+
+# CVE-2026-84838: shell injection (quote escape) via doUntar()
+RPMTEST_SETUP_RW([uncompress 7 (evil)])
+AT_KEYWORDS([build])
+
+RPMTEST_CHECK([
+cp /data/SOURCES/hello-2.0.tar.gz $RPMTEST/"'; touch gotcha; #.gz'"
+runroot rpmuncompress -x "'; touch gotcha; #.gz'"
+],
+[ignore],
+[],
+[ignore])
+
+RPMTEST_CHECK([
+test -f $RPMTEST/gotcha
+],
+[1],
+[],
+[])
 RPMTEST_CLEANUP
 
 RPMTEST_SETUP_RW([getncpus macro])
@@ -1135,6 +1210,15 @@ rpm --eval '%{lua: rpm.undefine("define")}'
 [[error: Macro %define is a built-in (%undefine)
 error: lua script failed: [string "<lua>"]:1: error undefining macro
 ]])
+
+RPMTEST_CHECK([
+rpm --eval '%{lua: macros.define = nil}'
+],
+[1],
+[],
+[[error: Macro %define is a built-in (%undefine)
+error: lua script failed: [string "<lua>"]:1: error undefining macro define
+]])
 RPMTEST_CLEANUP
 
 RPMTEST_SETUP([lua rpm extensions 2])
@@ -1295,6 +1379,29 @@ rpm.call("test", "foo", 6, 29 / 4)
 [0],
 [ string:foo number:6 number:7.25
 ])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP([lua statvfs])
+AT_KEYWORDS([macros lua])
+RPMTEST_CHECK([
+rpm --eval '%{lua:st=posix.statvfs("/"); print(st.bsize == math.tointeger(rpm.expand("%(stat -f -c%s /)")))}' \
+    --eval '%{lua:print(posix.statvfs("/", "namemax") == math.tointeger(posix.pathconf("/", "name_max")))}'
+],
+[0],
+[true
+true
+],
+[])
+
+RPMTEST_CHECK([
+# These appear to be fs/environment specific, but we know these for the
+# test-suite: root is mounted read-only and suid is not restricted.
+rpm --eval '%{lua:fl=posix.statvfs("/", "flag"); print(fl.nosuid, fl.rdonly)}'
+],
+[0],
+[false	true
+],
+[])
 RPMTEST_CLEANUP
 
 RPMTEST_SETUP([%define + %undefine in nested levels 1])
@@ -1723,6 +1830,133 @@ rpm --define "myonce<o> %(date)" --eval "%myonce" --showrc | grep ' myonce' | aw
 [myonce<l>
 ],
 [])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP([%define options])
+AT_KEYWORDS([macros])
+
+RPMTEST_CHECK([
+rpm \
+	--eval "%define aa 123" \
+	--eval "%define mm %aa %bb" \
+	--eval "%define -e nn %aa %bb" \
+	--eval "%define bb 321" \
+	--eval "%define aa 555" \
+	--eval "%mm" \
+	--eval "%nn"
+],
+[0],
+[555 321
+123 321
+],
+[])
+
+RPMTEST_CHECK([
+cat << EOF > mymacro
+%myparm() %{span:
+%define aa 123
+%define -g bb 321
+%define -eg cc %aa%bb
+%define -eg dd %aa%yy
+%aa
+%bb
+%cc
+%dd
+}
+EOF
+
+rpm \
+	--macros mymacro \
+	--eval "%myparm" \
+	--eval "%aa" \
+	--eval "%bb" \
+	--eval "%cc" \
+	--eval "%dd" \
+	--define "yy 555" \
+	--eval "%dd"
+],
+[0],
+[
+123
+321
+123321
+123%yy
+
+%aa
+321
+123321
+123%yy
+123555
+],
+[])
+
+RPMTEST_CHECK([
+rpm --eval "%define -x aa bb"
+],
+[1],
+[],
+[error: %define: invalid option -- 'x'
+])
+
+RPMTEST_CHECK([
+rpm --eval "%define -g -y aa bb"
+],
+[1],
+[],
+[error: %define: invalid option -- 'y'
+])
+
+RPMTEST_CHECK([
+rpm --eval "%define -"
+],
+[1],
+[],
+[error: %define: no option after -
+])
+
+RPMTEST_CHECK([
+rpm --eval "%define - xx yy"
+],
+[1],
+[],
+[error: %define: no option after -
+])
+
+RPMTEST_CHECK([
+rpm --eval "%define xx() yy" --eval "%xx"
+],
+[0],
+[yy
+],
+[])
+
+RPMTEST_CHECK([
+rpm \
+	--define "mypath /bar" \
+	--eval "%define -e xx(abc:) %mypath" \
+	--eval "%xx -a -b -c1" \
+	--eval "%define mypath /foo" \
+	--eval "%xx"
+],
+[0],
+[/bar
+/bar
+],
+[])
+RPMTEST_CHECK([
+rpm \
+	--define "mypath /bar" \
+	--eval "%define -g xx<o> %mypath" \
+	--eval "%xx" \
+	--eval "%define mypath /foo" \
+	--eval "%xx"
+],
+[0],
+[/bar
+/bar
+],
+[])
+
 RPMTEST_CLEANUP
 
 RPMTEST_SETUP([error macro return])

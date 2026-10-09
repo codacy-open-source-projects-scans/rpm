@@ -37,6 +37,7 @@ set(TESTSUITE_AT
 	rpmspec.at
 	rpmvfylevel.at
 	rpmsigdig.at
+	rpmplugins.at
 	rpmpkgfmt.at
 	rpmio.at
 	rpmverify.at
@@ -63,7 +64,7 @@ foreach(at ${TESTSUITE_AT})
 endforeach()
 
 set(TESTPROGS rpmpgpcheck rpmpgppubkeyfingerprint readpkgnullts rpmdig
-	      importkey oldtxn)
+	      importkey oldtxn fapolicydtest)
 foreach(prg ${TESTPROGS})
 	add_executable(${prg} EXCLUDE_FROM_ALL ${prg}.c)
 	target_link_libraries(${prg} PRIVATE librpm)
@@ -81,15 +82,26 @@ endif()
 # Set up mktree
 set(MKTREE_BACKEND oci CACHE STRING "Mktree backend to use")
 if (MKTREE_BACKEND STREQUAL oci)
-	find_program(PODMAN podman)
-	find_program(DOCKER docker)
-	mark_as_advanced(PODMAN DOCKER)
+	find_program(PODMAN podman REQUIRED)
+	mark_as_advanced(PODMAN)
+
+	# Find a Containerfile compatible with the host
 	os_release(OS_NAME ID)
 	os_release(OS_VERSION VERSION_ID)
-	set(DOCKERFILE ${CMAKE_CURRENT_SOURCE_DIR}/Dockerfile.${OS_NAME})
-	if (PODMAN AND EXISTS ${DOCKERFILE})
+	set(CONTAINERFILE ${CMAKE_CURRENT_SOURCE_DIR}/Containerfile.${OS_NAME})
+	set(CONTAINERFILE_FOUND FALSE)
+	if (EXISTS ${CONTAINERFILE})
+		file(STRINGS ${CONTAINERFILE} CONTAINERFILE_OS LIMIT_COUNT 1)
+		string(REGEX REPLACE "^ARG OS_RELEASE=${OS_NAME}:([0-9]+)$"
+			"\\1" CONTAINERFILE_OS "${CONTAINERFILE_OS}")
+		if (OS_VERSION STREQUAL CONTAINERFILE_OS)
+			set(CONTAINERFILE_FOUND TRUE)
+		endif()
+	endif()
+
+	if (CONTAINERFILE_FOUND)
 		set(MKTREE_NATIVE yes)
-		configure_file(${DOCKERFILE} Dockerfile COPYONLY)
+		configure_file(${CONTAINERFILE} Containerfile COPYONLY)
 		add_custom_target(ci
 			COMMAND ./mktree.oci build --toolchain clang
 			COMMAND ./mktree.oci clean
@@ -100,9 +112,8 @@ if (MKTREE_BACKEND STREQUAL oci)
 		)
 	else()
 		set(MKTREE_NATIVE no)
-		configure_file(Dockerfile Dockerfile COPYONLY)
+		configure_file(Containerfile Containerfile COPYONLY)
 	endif()
-	find_program(PODMAN NAMES podman docker REQUIRED)
 elseif (MKTREE_BACKEND STREQUAL rootfs)
 	set(MKTREE_NATIVE yes)
 	find_program(BWRAP bwrap REQUIRED)

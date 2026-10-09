@@ -7,10 +7,10 @@ add_executable(rpmsign rpmsign.cc cliutils)
 add_executable(rpmbuild rpmbuild.cc cliutils)
 add_executable(rpmspec rpmspec.cc cliutils)
 
-add_executable(rpmdeps rpmdeps.cc)
+add_executable(rpmdeps rpmdeps.cc cliutils)
 add_executable(rpmgraph rpmgraph.cc)
 add_executable(rpmlua rpmlua.cc)
-add_executable(rpmuncompress rpmuncompress.cc)
+add_executable(rpmuncompress rpmuncompress.cc cliutils)
 add_executable(rpmdump rpmdump.cc)
 
 target_link_libraries(rpmsign PRIVATE librpmsign)

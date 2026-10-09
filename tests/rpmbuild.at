@@ -679,7 +679,6 @@ RPMTEST_CLEANUP
 RPMTEST_SETUP_RW([rpmbuild with %autosetup -C])
 AT_KEYWORDS([build])
 RPMTEST_CHECK([
-
 rpmbuild \
   -bp ${RPMDATA}/SPECS/autosetup-noroot.spec
 ],
@@ -688,7 +687,14 @@ rpmbuild \
 [ignore])
 
 RPMTEST_CHECK([
+rpmbuild \
+  -bp ${RPMDATA}/SPECS/autosetup-noroot-nodir.spec
+],
+[0],
+[ignore],
+[ignore])
 
+RPMTEST_CHECK([
 rpmbuild \
   -bp ${RPMDATA}/SPECS/autosetup-singleroot.spec
 ],
@@ -709,6 +715,23 @@ rpmbuild \
   -bp ${RPMDATA}/SPECS/autosetup-singleroot2.spec
 ],
 [0],
+[ignore],
+[ignore])
+
+RPMTEST_CHECK([
+rpmbuild \
+  -bp ${RPMDATA}/SPECS/autosetup-singleroot-noslash.spec
+],
+[0],
+[ignore],
+[ignore])
+
+RPMTEST_CHECK([
+rpmbuild \
+  -bp --quiet ${RPMDATA}/SPECS/autosetup-singleroot-evil.spec
+test -f $RPMTEST/build/BUILD/*/beenhere
+],
+[1],
 [ignore],
 [ignore])
 RPMTEST_CLEANUP
@@ -748,6 +771,8 @@ runroot rpm -qp --qf '[%{FILELANGS} %{FILENAMES}\n]' /build/RPMS/noarch/find-lan
 ]],
 [0],
 [ /usr/share/find-lang-test/empty.txt
+be /usr/share/man/be/man1/find-lang-test.1.gz
+be@latin /usr/share/man/be@latin/man1/find-lang-test.1.gz
 de /usr/share/man/de_DE/man1/find-lang-test.1.gz
 fi /usr/share/man/fi/man1/find-lang-test.1.gz
  /usr/share/man/man1/find-lang-test.1.gz
@@ -773,6 +798,9 @@ runroot rpm -qp --qf '%{NVRA}\n[%{FILELANGS} %{FILENAMES}\n]' /build/RPMS/noarch
 [find-lang-test-1.0-1.noarch
  /usr/share/find-lang-test/empty.txt
  /usr/share/man/man1/find-lang-test.1.gz
+find-lang-test-langpack-be-1.0-1.noarch
+be /usr/share/man/be/man1/find-lang-test.1.gz
+be@latin /usr/share/man/be@latin/man1/find-lang-test.1.gz
 find-lang-test-langpack-de-1.0-1.noarch
 de /usr/share/man/de_DE/man1/find-lang-test.1.gz
 find-lang-test-langpack-fi-1.0-1.noarch
@@ -854,6 +882,110 @@ runroot rpm -q --qf "%{packager}\n" /build/SRPMS/hello-2.0-1.src.rpm
 [0],
 [Iam
 ],
+[])
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP_RW([rpmbuild -ts <spec> (evil)])
+AT_KEYWORDS([build])
+
+runroot /data/misc/CVE-2026-78367.py
+
+RPMTEST_CHECK([
+runroot --setenv RPM_POC_PATH /tmp/gotcha \
+	rpmbuild --quiet -ts evil.tar.gz
+],
+[0],
+[],
+[])
+
+RPMTEST_CHECK([
+test -f $RPMTEST/tmp/gotcha
+],
+[1],
+[],
+[])
+RPMTEST_CLEANUP
+
+# CVE-2026-84837: macro shell expansion
+RPMTEST_SETUP_RW([rpmbuild -ts <spec> (evil 2)])
+AT_KEYWORDS([build])
+
+RPMTEST_CHECK([
+runroot rpmbuild --quiet -ts \
+    "/data/SOURCES/hello-2.0.tar.gz}%(touch gotcha)%{nil"
+],
+[ignore],
+[],
+[ignore])
+
+RPMTEST_CHECK([
+test -f $RPMTEST/gotcha
+],
+[1],
+[],
+[])
+RPMTEST_CLEANUP
+
+# CVE-2026-84837: shell injection
+RPMTEST_SETUP_RW([rpmbuild -ts <spec> (evil 3)])
+AT_KEYWORDS([build])
+
+RPMTEST_CHECK([
+runroot rpmbuild --quiet -ts \
+    "/data/SOURCES/hello-2.0.tar.gz > hello.tar}; \
+     touch gotcha; cat hello.tar %{nil"
+],
+[ignore],
+[],
+[ignore])
+
+RPMTEST_CHECK([
+test -f $RPMTEST/gotcha
+],
+[1],
+[],
+[])
+RPMTEST_CLEANUP
+
+# CVE-2026-84837: shell injection (subshell)
+RPMTEST_SETUP_RW([rpmbuild -ts <spec> (evil 4)])
+AT_KEYWORDS([build])
+
+RPMTEST_CHECK([
+runroot rpmbuild --quiet -ts '$(touch gotcha).tar.gz'
+],
+[ignore],
+[],
+[ignore])
+
+RPMTEST_CHECK([
+test -f $RPMTEST/gotcha
+],
+[1],
+[],
+[])
+RPMTEST_CLEANUP
+
+# CVE-2026-84837: shell injection via rpmuncompress
+# This one needs actual files on disk and double quotes to pass through the
+# popen(3) call in getTarSpec() to the one in rpmuncompress
+RPMTEST_SETUP_RW([rpmbuild -ts <spec> (evil 5)])
+AT_KEYWORDS([build])
+
+RPMTEST_CHECK([
+cp /data/SOURCES/hello-2.0.tar.gz $RPMTEST/"\"'; touch gotcha; #.gz'\""
+cp /data/SOURCES/hello-2.0.tar.gz $RPMTEST/"'; touch gotcha; #.gz'"
+runroot rpmbuild --quiet -ts "\"'; touch gotcha; #.gz'\""
+],
+[ignore],
+[],
+[ignore])
+
+RPMTEST_CHECK([
+test -f $RPMTEST/gotcha
+],
+[1],
+[],
 [])
 RPMTEST_CLEANUP
 
@@ -1999,7 +2131,6 @@ RPMTEST_CLEANUP
 # Check if rpmbuild creates the minisymtab section in the main hello binary
 RPMTEST_SETUP_RW([rpmbuild debuginfo minisymtab])
 AT_KEYWORDS([build] [debuginfo])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 # Use macros.debug to generate a debuginfo package.
@@ -2036,7 +2167,6 @@ RPMTEST_CLEANUP
 # but the debug symbols/info in the debuginfo package.
 RPMTEST_SETUP_RW([rpmbuild debuginfo minisymtab strip -g])
 AT_KEYWORDS([build] [debuginfo])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 # Use macros.debug to generate a debuginfo package.
@@ -2075,7 +2205,6 @@ RPMTEST_CLEANUP
 # Test the case without unique debug file names.
 RPMTEST_SETUP_RW([rpmbuild debuginfo dwz])
 AT_KEYWORDS([build] [debuginfo] [dwz])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 rundebug rpmbuild --quiet \
@@ -2161,7 +2290,6 @@ RPMTEST_CLEANUP
 # Check that rpmbuild creates no debuginfo when --nodebuginfo is passed
 RPMTEST_SETUP_RW([rpmbuild no debuginfo])
 AT_KEYWORDS([build] [debuginfo])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 # Use macros.debug to generate a debuginfo package,
@@ -2194,7 +2322,6 @@ RPMTEST_CLEANUP
 # Test with unique debug file names.
 RPMTEST_SETUP_RW([rpmbuild debuginfo dwz unique debug names])
 AT_KEYWORDS([build] [debuginfo] [dwz])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 rundebug rpmbuild --quiet \
@@ -2280,7 +2407,6 @@ RPMTEST_CLEANUP
 # We explicitly build with all debug.macros to test those helpers.
 RPMTEST_SETUP_RW([rpmbuild implicit suid binary])
 AT_KEYWORDS([build] [debuginfo] [dwz] [suid])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 # Build a package that has some debuginfo
@@ -2311,7 +2437,6 @@ RPMTEST_CLEANUP
 # Check that a GDB index is included when requested.
 RPMTEST_SETUP_RW([rpmbuild debuginfo gdb index included])
 AT_KEYWORDS([build] [debuginfo] [gdb])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 # Build a package that has some debuginfo
@@ -2337,7 +2462,6 @@ RPMTEST_CLEANUP
 # Check that a GDB index is NOT included when not requested.
 RPMTEST_SETUP_RW([rpmbuild debuginfo no gdb index included])
 AT_KEYWORDS([build] [debuginfo] [gdb])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 # Build a package that has some debuginfo
@@ -2362,7 +2486,6 @@ RPMTEST_CLEANUP
 # Check that a -g3 (macros) build creates a valid .debug file.
 RPMTEST_SETUP_RW([rpmbuild debuginfo -g3 .debug_macro])
 AT_KEYWORDS([build] [debuginfo] [gdb])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 # Build a package that has some debuginfo generated with -g3.
@@ -2393,7 +2516,6 @@ RPMTEST_CLEANUP
 # Check that a debug source is in a "unique" directory when requested.
 RPMTEST_SETUP_RW([rpmbuild debuginfo unique debug src dir])
 AT_KEYWORDS([build] [debuginfo])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 # Build a package that has some debuginfo
@@ -2429,7 +2551,6 @@ RPMTEST_CLEANUP
 # It will be in the "build directory" name under /usr/src/debug.
 RPMTEST_SETUP_RW([rpmbuild debuginfo no unique debug src dir])
 AT_KEYWORDS([build] [debuginfo])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 # Build a package that has some debuginfo
@@ -2462,7 +2583,6 @@ RPMTEST_CLEANUP
 # Check that defining _debugsource_packages creates -debugsource package
 RPMTEST_SETUP_RW([rpmbuild debugsource])
 AT_KEYWORDS([build] [debuginfo] [debugsource])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 rundebug rpmbuild --quiet \
@@ -2493,7 +2613,6 @@ RPMTEST_CLEANUP
 # should be in expected build dir).
 RPMTEST_SETUP_RW([rpmbuild debugsource debugsourcefiles.list path])
 AT_KEYWORDS([build] [debuginfo] [debugsource])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 rundebug rpmbuild --quiet \
@@ -2517,7 +2636,6 @@ RPMTEST_CLEANUP
 # Check that undefining _debuginfo_subpackages creates one single -debuginfo.
 RPMTEST_SETUP_RW([rpmbuild debuginfo subpackages single])
 AT_KEYWORDS([build] [debuginfo] [debugsubpackage])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 rundebug rpmbuild --quiet \
@@ -2555,7 +2673,6 @@ RPMTEST_CLEANUP
 # Check that defining _debuginfo_subpackages creates multiple -debuginfos.
 RPMTEST_SETUP_RW([rpmbuild debuginfo subpackages multiple])
 AT_KEYWORDS([build] [debuginfo] [debugsubpackage])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 rundebug rpmbuild --quiet \
@@ -2635,7 +2752,6 @@ RPMTEST_CLEANUP
 # With unique debug and source names
 RPMTEST_SETUP_RW([rpmbuild debuginfo subpackages multiple unique])
 AT_KEYWORDS([build] [debuginfo] [debugsubpackage])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 rundebug rpmbuild --quiet \
@@ -2715,7 +2831,6 @@ RPMTEST_CLEANUP
 # Unique with debugsources.
 RPMTEST_SETUP_RW([rpmbuild debuginfo subpackages multiple unique debugsource])
 AT_KEYWORDS([build] [debuginfo] [debugsubpackage] [debugsource])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 rundebug rpmbuild --quiet \
@@ -2798,7 +2913,6 @@ RPMTEST_CLEANUP
 # Check that defining _debuginfo_subpackages works with excluded files.
 RPMTEST_SETUP_RW([rpmbuild debuginfo subpackages multiple excluded])
 AT_KEYWORDS([build] [debuginfo] [debugsubpackage] [debugsource])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 rundebug rpmbuild --quiet \
@@ -2858,7 +2972,6 @@ RPMTEST_CLEANUP
 # Check that defining _debuginfo_subpackages works with RemovePathPostfixes.
 RPMTEST_SETUP_RW([rpmbuild debuginfo subpackages multiple excluded])
 AT_KEYWORDS([build] [debuginfo] [debugsubpackage] [debugsource])
-RPMTEST_SKIP_IF([$DEBUGINFO_DISABLED])
 RPMTEST_CHECK([
 
 rundebug rpmbuild --quiet \
@@ -4114,7 +4227,7 @@ rpmuncompress -n /data/SOURCES/hello-2.0.tar.gz
 ],
 [0],
 [],
-[/usr/bin/gzip -dc /data/SOURCES/hello-2.0.tar.gz
+[/usr/bin/gzip -dc '/data/SOURCES/hello-2.0.tar.gz'
 ])
 
 RPMTEST_CHECK([
@@ -4126,8 +4239,27 @@ rpmuncompress --macros=macros.aux -n /data/SOURCES/hello-2.0.tar.gz
 ],
 [0],
 [],
-[/an/alternative/gzip -dc /data/SOURCES/hello-2.0.tar.gz
+[/an/alternative/gzip -dc '/data/SOURCES/hello-2.0.tar.gz'
 ])
+
+RPMTEST_CLEANUP
+
+RPMTEST_SETUP([rpmuncompress filename with spaces])
+AT_KEYWORDS([build tools])
+RPMTEST_CHECK([
+cp /data/SOURCES/hello-2.0.tar.gz "hello world-2.0.tar.gz"
+rpmuncompress "hello world-2.0.tar.gz" | tar tf -
+],
+[0],
+[hello-2.0/
+hello-2.0/COPYING
+hello-2.0/hello.spec
+hello-2.0/hello.c
+hello-2.0/Makefile
+hello-2.0/README
+hello-2.0/FAQ
+],
+[])
 
 RPMTEST_CLEANUP
 
